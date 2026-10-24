@@ -68,3 +68,7 @@ Next to a JFR from `record`, the `.log`, `.proc.csv` and `.properties` files are
 Other options:
 - `--event auto|wall|cpu`: which sample event to use when the JFR has both.
 - `--interval MS`: the sample interval, if it can't be inferred from the samples.
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE).
