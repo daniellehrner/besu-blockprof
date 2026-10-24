@@ -5,3 +5,5 @@ build/
 !res/report.html
 *.log
 *.properties
+runs/
+*.proc.csv
