@@ -138,11 +138,6 @@ header { display: grid; gap: 10px; }
 .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 14px 16px 10px; }
 .panel-body { padding: 0 16px 16px; }
 
-.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--hair); border-radius: 6px; overflow: hidden; border: 1px solid var(--hair); }
-.verdict > div { background: var(--surface); padding: 12px 14px; display: grid; gap: 4px; align-content: start; }
-.verdict .v { font-family: var(--f-mono); font-size: var(--s-lg); font-weight: 500; }
-.verdict .d { font-size: var(--s-sm); color: var(--ink-2); }
-
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--s-sm); color: var(--ink-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; flex: none; }
@@ -236,8 +231,6 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
     <p class="sub" id="intro"></p>
     <div class="meta" id="meta"></div>
   </header>
-
-  <section class="verdict" id="verdict" aria-label="Summary across all captured blocks"></section>
 
   <section class="panel">
     <div class="panel-head">
@@ -485,7 +478,7 @@ function requestSpans(b) {
 }
 const fmtBytes = v => v >= 1048576 ? fmt(v / 1048576, 1) + ' MB' : v >= 1024 ? fmt(v / 1024) + ' KB' : fmt(v) + ' B';
 
-// ---------- header + verdict ----------
+// ---------- header ----------
 document.getElementById('label').textContent = D.meta.label;
 document.getElementById('intro').textContent =
   (D.meta.event === 'cpu'
@@ -499,53 +492,6 @@ const meta = document.getElementById('meta');
 for (const [k, v] of [['build', D.meta.build], ['capture (UTC)', D.meta.capture], ['profiler', D.meta.profiler], ['blocks', String(D.blocks.length)]]) {
   const s = document.createElement('span'); s.innerHTML = `${k} <b></b>`; s.querySelector('b').textContent = v; meta.append(s);
 }
-
-(function verdict() {
-  let execFile = 0, execNative = 0, fileDisk = 0, fileCache = 0, npDisk = 0, npBlocked = 0, procBlocks = 0;
-  let np = 0, exec = 0, execRead = 0, apply = 0, sr = 0, persist = 0, fcu = 0, fcuDb = 0, worst = null;
-  for (const b of D.blocks) {
-    np += b.npMs; fcu += b.fcuMs;
-    const r = b.eng.np['blk.txSequential']; if (r) { exec += r[0]; execRead += r[2]; }
-    if (b.engine) for (const s of b.engine.s) if (D.phases[s[2]] === 'blk.txSequential' && s[3] === 1 && inSegs(b.segs, s[0] / 10)) { if (s[6] === 1) execFile += IV * s[5]; if (s[6] !== 11) execNative += IV * s[5]; }
-    const a = b.eng.np['blk.applyParallel']; if (a) apply += a[0];
-    sr += (b.eng.np['persist.stateRoot'] || [0])[0];
-    for (const p of ['persist.trieLog', 'persist.dbCommit', 'np.storeBlock', 'persist.other']) persist += (b.eng.np[p] || [0])[0];
-    for (const r2 of Object.values(b.eng.fcu)) fcuDb += r2[2] + r2[3];
-    if (!worst || b.npMs > worst.npMs) worst = b;
-    if (HAS_PROC && b.engine) {
-      for (const s of b.engine.s) {
-        if (!isEngineRequest(D.phases[s[2]])) continue;
-        const src = preadSource(b, b.engine, s);
-        if (src === 'disk') fileDisk += IV * s[5]; else if (src === 'cache') fileCache += IV * s[5];
-      }
-      const span = requestSpans(b).np, p = procOver(procSeries(b, b.engine), span[0], span[1]);
-      if (p) { npDisk += p.disk; npBlocked += p.blocked; procBlocks++; }
-    }
-  }
-  const n = D.blocks.length || 1;
-  const pct = (x, y) => y ? fmt(100 * x / y) + '%' : '–';
-  const wr = worst.eng.np['blk.txSequential'] || [0, 0, 0, 0, 0];
-  const cells = [
-    ['Engine thread per newPayload', fmt(np / n) + ' ms', `average over ${n} blocks; FCU adds ${fmt(fcu / n)} ms. Slowest: #${fmt(worst.num)} at ${fmt(worst.npMs)} ms`],
-    ['Txs run on the engine thread', pct(exec, np), `${fmt(exec / n)} ms per block, for conflicts and for txs the workers had not finished. Applying worker results: ${fmt(apply / n, 1)} ms`],
-    ['Of that, inside RocksDB reads', pct(execRead, exec), `${fmt(execRead / n)} ms per block, flat-DB slot and account reads that missed Besu's caches` +
-      (execNative ? `; ${pct(execFile, execNative)} of it in RocksDB's file read (pread)` : `. #${fmt(worst.num)}: ${fmt(wr[2])} of ${fmt(wr[0])} ms`)],
-    ['State root in newPayload', fmt(sr / n, 1) + ' ms', `engine thread only; persist writes (trie log, commit, block store) ${fmt(persist / n, 1)} ms`],
-    ['FCU inside RocksDB', pct(fcuDb, fcu), `${fmt(fcuDb / n)} of ${fmt(fcu / n)} ms per FCU: writing the rolled world state`],
-  ];
-  if (HAS_PROC && fileDisk + fileCache) {
-    cells.splice(3, 0, ['Engine file reads from disk', pct(fileDisk, fileDisk + fileCache),
-      `of its time in RocksDB's file read during newPayload; the rest came from the page cache. Per newPayload: ` +
-      `${fmtBytes(npDisk / (procBlocks || 1))} from disk, ${fmt(npBlocked / (procBlocks || 1))} ms blocked`]);
-  }
-  const el = document.getElementById('verdict');
-  for (const [k, v, d] of cells) {
-    const c = document.createElement('div');
-    c.innerHTML = `<span class="label"></span><span class="v"></span><span class="d"></span>`;
-    c.children[0].textContent = k; c.children[1].textContent = v; c.children[2].textContent = d;
-    el.append(c);
-  }
-})();
 
 function legend(el, withIo) {
   el.innerHTML = '';
