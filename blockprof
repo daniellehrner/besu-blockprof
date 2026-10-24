@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec java -jar "$(dirname "$(readlink -f "$0")")/blockprof.jar" "$@"

@@ -1,0 +1,1224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Besu Block Anatomy</title>
+<style>
+/* Layout: an instrument panel. Block strip (summary, also the picker) above the swim lanes of
+   one block; lanes are threads, x is wall time with the CL turnaround cut out. */
+[hidden] { display: none !important; }
+:root {
+  color-scheme: light;
+  --bg: #f4f5f7;
+  --surface: #fdfdfd;
+  --ink: #14171b;
+  --ink-2: #4a505a;
+  --muted: #7f8792;
+  --grid: #e3e6ea;
+  --axis: #c3c8cf;
+  --hair: rgba(20, 23, 27, 0.10);
+  --wait: rgba(20, 23, 27, 0.10);
+  --io-read: #14171b;
+  --io-write: #b7bec7;
+  --sel: rgba(20, 23, 27, 0.07);
+  --c-stateRoot: #2a78d6;
+  --c-mainExec: #eb6834;
+  --c-parallel: #1baf7a;
+  --c-prefetch: #eda100;
+  --c-persist: #e87ba4;
+  --c-validate: #008300;
+  --c-fcu: #6250d6;
+  --c-gc: #e34948;
+  --c-other: #b4bac2;
+  --f-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "DejaVu Sans", sans-serif;
+  --f-cond: "IBM Plex Sans Condensed", "Roboto Condensed", "Arial Narrow", "DejaVu Sans Condensed", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --s-xs: 11px;
+  --s-sm: 12.5px;
+  --s-md: 14px;
+  --s-lg: 18px;
+  --s-xl: 26px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0e1013;
+    --surface: #16191d;
+    --ink: #edf0f3;
+    --ink-2: #b8bec7;
+    --muted: #7d8590;
+    --grid: #252a30;
+    --axis: #3a4048;
+    --hair: rgba(255, 255, 255, 0.10);
+    --wait: rgba(255, 255, 255, 0.10);
+    --io-read: #edf0f3;
+    --io-write: #59606a;
+    --sel: rgba(255, 255, 255, 0.09);
+    --c-stateRoot: #3987e5;
+    --c-mainExec: #d95926;
+    --c-parallel: #199e70;
+    --c-prefetch: #c98500;
+    --c-persist: #d55181;
+    --c-validate: #008300;
+    --c-fcu: #9085e9;
+    --c-gc: #e66767;
+    --c-other: #4b525b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1013;
+  --surface: #16191d;
+  --ink: #edf0f3;
+  --ink-2: #b8bec7;
+  --muted: #7d8590;
+  --grid: #252a30;
+  --axis: #3a4048;
+  --hair: rgba(255, 255, 255, 0.10);
+  --wait: rgba(255, 255, 255, 0.10);
+  --io-read: #edf0f3;
+  --io-write: #59606a;
+  --sel: rgba(255, 255, 255, 0.09);
+  --c-stateRoot: #3987e5;
+  --c-mainExec: #d95926;
+  --c-parallel: #199e70;
+  --c-prefetch: #c98500;
+  --c-persist: #d55181;
+  --c-validate: #008300;
+  --c-fcu: #9085e9;
+  --c-gc: #e66767;
+  --c-other: #4b525b;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--f-sans);
+  font-size: var(--s-md);
+  line-height: 1.45;
+  padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1440px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 600; }
+h1 { font-size: var(--s-xl); letter-spacing: -0.01em; }
+h2 { font-size: var(--s-lg); }
+h3 { font-size: var(--s-md); }
+p { margin: 0; max-width: 72ch; }
+.mono, td.num, .num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.label {
+  font-family: var(--f-cond); font-size: var(--s-xs); text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted); font-weight: 500;
+}
+.sub { color: var(--ink-2); font-size: var(--s-sm); }
+header { display: grid; gap: 10px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: var(--s-sm); color: var(--ink-2); }
+.meta b { font-weight: 500; color: var(--ink); font-family: var(--f-mono); font-size: var(--s-xs); }
+
+.panel { background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 14px 16px 10px; }
+.panel-body { padding: 0 16px 16px; }
+
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--hair); border-radius: 6px; overflow: hidden; border: 1px solid var(--hair); }
+.verdict > div { background: var(--surface); padding: 12px 14px; display: grid; gap: 4px; align-content: start; }
+.verdict .v { font-family: var(--f-mono); font-size: var(--s-lg); font-weight: 500; }
+.verdict .d { font-size: var(--s-sm); color: var(--ink-2); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--s-sm); color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; flex: none; }
+.sw.io { background: var(--io-read); height: 4px; }
+.sw.iow { background: var(--io-write); height: 4px; }
+.sw.iocpu { background: var(--muted); height: 4px; }
+.sw.sel { background: var(--sel); outline: 1px solid var(--ink); }
+.tl-inner { position: relative; }
+#tl-ov { position: absolute; left: 0; top: 0; pointer-events: none; }
+.methods { display: grid; gap: 12px; border-top: 1px solid var(--grid); padding-top: 14px; }
+.methods-head { display: grid; gap: 8px; }
+.methods select { font: inherit; font-size: var(--s-sm); color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 4px; padding: 3px 6px; }
+.methods select:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.mgrid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; align-items: start; }
+@media (max-width: 1000px) { .mgrid { grid-template-columns: minmax(0, 1fr); } }
+.flame-scroll { overflow: auto; max-height: 560px; border: 1px solid var(--grid); border-radius: 4px; }
+#flame { display: block; cursor: pointer; }
+#m-top td.m { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+#m-top td.m .pkg { color: var(--muted); }
+#m-top tbody tr { cursor: pointer; }
+#m-top tbody tr:hover td { background: var(--bg); }
+#m-top tbody tr[aria-selected="true"] td { background: var(--bg); box-shadow: inset 0 -1px 0 var(--ink); }
+#m-top th.sortable { cursor: pointer; }
+#m-top th[aria-sort] { color: var(--ink); }
+.seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 5px; overflow: hidden; }
+.seg button { font: inherit; font-size: var(--s-sm); background: var(--surface); color: var(--ink-2); border: 0; padding: 4px 12px; cursor: pointer; display: inline-flex; gap: 6px; align-items: baseline; }
+.seg button + button { border-left: 1px solid var(--axis); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.seg button .mono { font-size: var(--s-xs); opacity: 0.8; }
+.seg button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.rocks { display: grid; grid-template-columns: max-content minmax(80px, 1fr) max-content max-content; gap: 3px 10px; align-items: center; font-size: var(--s-sm); }
+.rocks .bar { height: 10px; background: var(--ink-2); border-radius: 0 2px 2px 0; min-width: 1px; }
+.rocks .bar.file { background: var(--ink); }
+.rocks .bar.write { background: var(--io-write); }
+.rocks .n { font-family: var(--f-mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2); }
+.sw.wait { background: var(--wait); outline: 1px solid var(--hair); }
+
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: var(--s-sm); }
+th { text-align: left; font-family: var(--f-cond); font-weight: 500; font-size: var(--s-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
+th.num, td.num { text-align: right; }
+td { padding: 4px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+#blocks tbody tr { cursor: pointer; }
+#blocks tbody tr:hover td { background: var(--bg); }
+#blocks tbody tr[aria-selected="true"] td { background: var(--bg); }
+#blocks tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
+#blocks tbody tr:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+td.bar { width: 46%; min-width: 260px; }
+.stack { display: flex; height: 12px; gap: 1px; }
+.stack i { display: block; height: 100%; min-width: 0; }
+.stack i:first-child { border-radius: 2px 0 0 2px; }
+.stack i:last-child { border-radius: 0 2px 2px 0; }
+.stack .brk { width: 8px; flex: none; background: none; }
+
+.tl-wrap { position: relative; }
+#tl { display: block; }
+.tl-scroll { overflow-x: auto; overflow-y: hidden; }
+#tip {
+  position: fixed; z-index: 20; pointer-events: none; max-width: min(560px, 92vw);
+  background: var(--surface); color: var(--ink); border: 1px solid var(--axis); border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.16); padding: 10px 12px; font-size: var(--s-xs);
+}
+#tip .t-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; font-size: var(--s-sm); }
+#tip .frames, #pinned .frames { font-family: var(--f-mono); font-size: 10.5px; line-height: 1.5; color: var(--ink-2); white-space: pre; overflow: hidden; }
+#tip .frames .hit, #pinned .frames .hit { color: var(--ink); font-weight: 500; }
+#pinned .frames { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hair); font-size: var(--s-xs); color: var(--ink-2); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: var(--s-sm); color: var(--ink-2); }
+.controls label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+button.nav { font: inherit; font-size: var(--s-sm); background: var(--surface); color: var(--ink); border: 1px solid var(--axis); border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+button.nav:hover { background: var(--bg); }
+button.nav:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+.fam-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 6px; vertical-align: 0; }
+tr.fam td { font-weight: 500; color: var(--ink); background: var(--bg); }
+tr.sub td:first-child { padding-left: 24px; color: var(--ink-2); }
+.notes { display: grid; gap: 8px; font-size: var(--s-sm); color: var(--ink-2); }
+.notes p { max-width: 110ch; }
+code { font-family: var(--f-mono); font-size: 0.92em; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="label" id="label"></div>
+    <h1>Besu Block Anatomy</h1>
+    <p class="sub" id="intro"></p>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <section class="verdict" id="verdict" aria-label="Summary across all captured blocks"></section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Blocks in the capture</h2>
+      <span class="sub">Engine thread time per block, stacked by phase: newPayload, then FCU. Select a row to open its timeline.</span>
+    </div>
+    <div class="panel-body">
+      <div class="legend" id="legend-top"></div>
+      <div class="scroll" style="margin-top:10px">
+        <table id="blocks" role="grid" aria-label="Blocks"></table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="detail">
+    <div class="panel-head">
+      <h2 id="d-title"></h2>
+      <span class="sub mono" id="d-sub"></span>
+      <span style="flex:1"></span>
+      <button class="nav" id="prev" type="button">← Previous block</button>
+      <button class="nav" id="next" type="button">Next block →</button>
+    </div>
+    <div class="panel-body" style="display:grid; gap:14px">
+      <div class="controls">
+        <label><input type="checkbox" id="opt-other" checked> Other busy threads</label>
+        <label><input type="checkbox" id="opt-idle"> Idle samples inside a phase</label>
+        <span class="sub" id="d-axis-note"></span>
+      </div>
+      <div class="legend" id="legend-tl"></div>
+      <div class="tl-wrap tl-scroll" id="tl-scroll">
+        <div class="tl-inner">
+          <canvas id="tl" aria-label="Thread timeline of the selected block"></canvas>
+          <canvas id="tl-ov" aria-hidden="true"></canvas>
+        </div>
+      </div>
+      <div class="methods" id="methods">
+        <div class="methods-head">
+          <h3>Where the time went</h3>
+          <div class="controls">
+            <span class="seg" role="group" aria-label="Request">
+              <button type="button" id="req-np" aria-pressed="true">newPayload <span class="mono" id="req-np-ms"></span></button>
+              <button type="button" id="req-fcu" aria-pressed="false">FCU <span class="mono" id="req-fcu-ms"></span></button>
+            </span>
+            <label for="m-scope">Threads</label>
+            <select id="m-scope"></select>
+            <span class="chip" id="m-range">Whole window</span>
+            <button class="nav" id="m-clear" type="button" hidden>Clear time range</button>
+            <label><input type="checkbox" id="m-idle"> Include parked and idle samples</label>
+            <label><input type="checkbox" id="m-java"> Count native time on the calling Java method</label>
+          </div>
+          <p class="sub" id="m-total"></p>
+          <p class="sub">Drag across the timeline to pick a time range. Click a thread or pool name on the left of the timeline to look at just that thread or pool. In the flame graph, a bar labelled “first › n frames › last” is a run of calls that only pass through, merged so the graph stays shallow; hover it for the full list. Click a bar to zoom in and the top bar to zoom out; click a method in the table to highlight it.</p>
+        </div>
+        <div class="mgrid">
+          <div style="display:grid; gap:8px">
+            <div class="flame-scroll" id="flame-scroll"><canvas id="flame" aria-label="Flame graph of the selection"></canvas></div>
+          </div>
+          <div style="display:grid; gap:14px">
+            <div>
+              <h3 style="margin-bottom:6px">Inside RocksDB</h3>
+              <div class="rocks" id="m-rocks"></div>
+            </div>
+            <div class="scroll"><table id="m-top"></table></div>
+          </div>
+        </div>
+      </div>
+      <div class="grid2">
+        <div>
+          <h3 style="margin-bottom:6px">Engine thread, this block</h3>
+          <div class="scroll"><table id="phase-table"></table></div>
+        </div>
+        <div style="display:grid; gap:14px; align-content:start">
+          <div>
+            <h3 style="margin-bottom:6px">Other threads, busy time</h3>
+            <div class="scroll"><table id="pool-table"></table></div>
+          </div>
+          <div id="pinned">
+            <h3 style="margin-bottom:6px">Pinned sample</h3>
+            <p class="sub">Click a sample in the timeline to keep its stack here.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>How to read it</h2></div>
+    <div class="panel-body notes" id="notes"></div>
+  </section>
+</div>
+<div id="tip" hidden></div>
+
+<script id="data" type="application/json">/*DATA*/</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById('data').textContent);
+const IV = D.meta.intervalMs;
+const PAD = D.pad;
+
+const FAMILIES = [
+  ['stateRoot', 'State root'],
+  ['mainExec', 'Tx executed on engine thread'],
+  ['parallel', 'Parallel tx (workers) / applying their result'],
+  ['prefetch', 'Trie node prefetch'],
+  ['persist', 'Persist: trie log, DB commit, block store'],
+  ['validate', 'Decode, validation, receipts'],
+  ['fcu', 'FCU world-state roll'],
+  ['gc', 'GC'],
+  ['other', 'Other'],
+];
+const FAM_LABEL = Object.fromEntries(FAMILIES);
+const PHASE_LABEL = {
+  'np.other': 'newPayload (other)', 'np.decode': 'Decode JSON params', 'np.header': 'Build header, block hash, tx root',
+  'np.senders': 'Start sender recovery', 'np.validate': 'rememberBlock (other)', 'np.headerValidation': 'Header validation',
+  'np.worldState': 'Get parent world state', 'blk.other': 'processBlock (other)', 'blk.startParallel': 'Start parallel execution',
+  'blk.applyParallel': 'Apply parallel result (conflict check)', 'blk.txSequential': 'Tx executed on engine thread',
+  'blk.receipts': 'Receipts', 'blk.system': 'System calls, withdrawals, requests', 'blk.accumulatorCommit': 'Accumulator commit',
+  'persist.other': 'Persist (other)', 'persist.stateRoot': 'State root', 'persist.trieLog': 'Trie log', 'persist.dbCommit': 'DB commit',
+  'np.bodyValidation': 'Body validation (receipts root, bloom)', 'np.storeBlock': 'Store block', 'np.respond': 'Build response',
+  'fcu.other': 'FCU (other)', 'fcu.rollWorldState': 'Roll world state', 'fcu.rollForward': 'Roll forward trie log',
+  'fcu.chainHead': 'Move chain head', 'fcu.stateRoot': 'FCU state root', 'fcu.trieLog': 'FCU trie log', 'fcu.dbCommit': 'FCU DB commit',
+  'w.parallelTx': 'Parallel tx', 'w.prefetch': 'Trie node prefetch', 'w.senders': 'Sender recovery',
+  'w.trieParallel': 'Parallel trie hashing', 'w.rpc': 'RPC / network IO', 'gc': 'GC', 'jit': 'JIT compiler',
+  'unknown': 'Stack not walkable (unknown_Java)', 'other': 'Other',
+};
+function family(p) {
+  if (p === 'blk.txSequential') return 'mainExec';
+  if (p === 'w.parallelTx' || p === 'blk.applyParallel' || p === 'blk.startParallel') return 'parallel';
+  if (p.endsWith('stateRoot') || p === 'w.trieParallel') return 'stateRoot';
+  if (p === 'w.prefetch') return 'prefetch';
+  if (/trieLog|dbCommit|storeBlock|persist\.other/.test(p)) return 'persist';
+  if (p.startsWith('fcu.')) return 'fcu';
+  if (p === 'gc') return 'gc';
+  if (p.startsWith('np.') || p.startsWith('blk.') || p === 'w.senders') return 'validate';
+  return 'other';
+}
+const ACT = ['Running', 'In RocksDB read', 'In RocksDB write', 'Parked / idle', 'In a syscall'];
+const busyAct = a => a === 0 || a === 1 || a === 2;
+const actCol = a => 1 + Math.min(a, 3);
+const PH_FAM = D.phases.map(family);
+const isEngineRequest = p => p.startsWith('np.') || p.startsWith('blk.') || p.startsWith('persist.');
+
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+let COL = {};
+function readColors() {
+  COL = {};
+  for (const [k] of FAMILIES) COL[k] = css('--c-' + k);
+  for (const k of ['ink', 'ink-2', 'muted', 'grid', 'axis', 'surface', 'bg', 'wait', 'io-read', 'io-write', 'hair']) COL[k] = css('--' + k);
+}
+readColors();
+
+// ---------- per-block derived data ----------
+const isEngine = n => n.startsWith('engine-ordered-execution');
+const short = n => n.replace(/#\d+$/, '');
+for (const b of D.blocks) {
+  b.execStart = b.logT - b.execMs; // ms from window start, rememberBlock start
+  const eng = b.threads.find(t => isEngine(t.name));
+  b.engine = eng;
+  let npF = Infinity, npL = -Infinity, fF = Infinity, fL = -Infinity;
+  if (eng) for (const s of eng.s) {
+    const t = s[0] / 10, p = D.phases[s[2]];
+    if (isEngineRequest(p)) { npF = Math.min(npF, t); npL = Math.max(npL, t + IV); }
+    else if (p.startsWith('fcu.') && t > b.logT - IV) { fF = Math.min(fF, t); fL = Math.max(fL, t + IV); }
+  }
+  if (!isFinite(npF)) { npF = b.execStart; npL = b.logT; }
+  b.npFirst = npF; b.npLast = npL;
+  const segA = [Math.min(npF, b.execStart) - PAD, Math.max(npL, b.logT) + PAD];
+  let segs = [segA];
+  if (b.fcuT >= 0) {
+    const fs = isFinite(fF) ? Math.min(fF, b.fcuT) : b.fcuT;
+    const fe = isFinite(fL) ? Math.max(fL, b.fcuT) : b.fcuT;
+    b.fcuFirst = isFinite(fF) ? fF : null;
+    const segB = [fs - PAD, fe + PAD];
+    if (segB[0] <= segA[1] + 2 * IV) segs = [[segA[0], Math.max(segA[1], segB[1])]];
+    else segs.push(segB);
+  }
+  b.segs = segs;
+  // engine thread accounting
+  b.eng = { np: {}, fcu: {}, act: {}, fam: {} };
+  if (eng) for (const s of eng.s) {
+    const t = s[0] / 10, p = D.phases[s[2]];
+    if (!inSegs(segs, t)) continue;
+    const ms = IV * s[5];
+    const req = isEngineRequest(p) ? 'np' : p.startsWith('fcu.') ? 'fcu' : null;
+    if (!req) continue;
+    const row = (b.eng[req][p] ||= [0, 0, 0, 0, 0]);
+    row[0] += ms; row[actCol(s[3])] += ms;
+    const fk = req + ':' + PH_FAM[s[2]];
+    b.eng.fam[fk] = (b.eng.fam[fk] || 0) + ms;
+  }
+  b.npMs = sum(Object.values(b.eng.np).map(r => r[0]));
+  b.fcuMs = sum(Object.values(b.eng.fcu).map(r => r[0]));
+}
+function inSegs(segs, t) { for (const s of segs) if (t >= s[0] && t <= s[1]) return true; return false; }
+function sum(a) { return a.reduce((x, y) => x + y, 0); }
+const fmt = (v, d = 0) => v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+// ---------- header + verdict ----------
+document.getElementById('label').textContent = D.meta.label;
+document.getElementById('intro').textContent =
+  (D.meta.event === 'cpu'
+    ? `Every thread of the Besu JVM sampled every ${IV} ms of CPU time, so threads that are off CPU leave gaps. `
+    : `Every thread of the Besu JVM sampled every ${IV} ms of wall time. `) +
+  `Each block's window comes from the besu log: ` +
+  `newPayload runs from "Imported" minus its exec time to the "Imported" line, FCU ends at its "FCU(VALID)" line, ` +
+  `and both are padded by ${PAD} ms. Samples carry the stack, so every slice says which phase the thread was in ` +
+  `and whether it was on CPU, in RocksDB or waiting.`;
+const meta = document.getElementById('meta');
+for (const [k, v] of [['build', D.meta.build], ['capture (UTC)', D.meta.capture], ['profiler', D.meta.profiler], ['blocks', String(D.blocks.length)]]) {
+  const s = document.createElement('span'); s.innerHTML = `${k} <b></b>`; s.querySelector('b').textContent = v; meta.append(s);
+}
+
+(function verdict() {
+  let execFile = 0, execNative = 0;
+  let np = 0, exec = 0, execRead = 0, apply = 0, sr = 0, persist = 0, fcu = 0, fcuDb = 0, worst = null;
+  for (const b of D.blocks) {
+    np += b.npMs; fcu += b.fcuMs;
+    const r = b.eng.np['blk.txSequential']; if (r) { exec += r[0]; execRead += r[2]; }
+    if (b.engine) for (const s of b.engine.s) if (D.phases[s[2]] === 'blk.txSequential' && s[3] === 1 && inSegs(b.segs, s[0] / 10)) { if (s[6] === 1) execFile += IV * s[5]; if (s[6] !== 11) execNative += IV * s[5]; }
+    const a = b.eng.np['blk.applyParallel']; if (a) apply += a[0];
+    sr += (b.eng.np['persist.stateRoot'] || [0])[0];
+    for (const p of ['persist.trieLog', 'persist.dbCommit', 'np.storeBlock', 'persist.other']) persist += (b.eng.np[p] || [0])[0];
+    for (const r2 of Object.values(b.eng.fcu)) fcuDb += r2[2] + r2[3];
+    if (!worst || b.npMs > worst.npMs) worst = b;
+  }
+  const n = D.blocks.length || 1;
+  const pct = (x, y) => y ? fmt(100 * x / y) + '%' : '–';
+  const wr = worst.eng.np['blk.txSequential'] || [0, 0, 0, 0, 0];
+  const cells = [
+    ['Engine thread per newPayload', fmt(np / n) + ' ms', `average over ${n} blocks; FCU adds ${fmt(fcu / n)} ms. Slowest: #${fmt(worst.num)} at ${fmt(worst.npMs)} ms`],
+    ['Txs run on the engine thread', pct(exec, np), `${fmt(exec / n)} ms per block, for conflicts and for txs the workers had not finished. Applying worker results: ${fmt(apply / n, 1)} ms`],
+    ['Of that, inside RocksDB reads', pct(execRead, exec), `${fmt(execRead / n)} ms per block, flat-DB slot and account reads that missed Besu's caches` +
+      (execNative ? `; ${pct(execFile, execNative)} of it in RocksDB's file read (pread)` : `. #${fmt(worst.num)}: ${fmt(wr[2])} of ${fmt(wr[0])} ms`)],
+    ['State root in newPayload', fmt(sr / n, 1) + ' ms', `engine thread only; persist writes (trie log, commit, block store) ${fmt(persist / n, 1)} ms`],
+    ['FCU inside RocksDB', pct(fcuDb, fcu), `${fmt(fcuDb / n)} of ${fmt(fcu / n)} ms per FCU: writing the rolled world state`],
+  ];
+  const el = document.getElementById('verdict');
+  for (const [k, v, d] of cells) {
+    const c = document.createElement('div');
+    c.innerHTML = `<span class="label"></span><span class="v"></span><span class="d"></span>`;
+    c.children[0].textContent = k; c.children[1].textContent = v; c.children[2].textContent = d;
+    el.append(c);
+  }
+})();
+
+function legend(el, withIo) {
+  el.innerHTML = '';
+  for (const [k, l] of FAMILIES) {
+    const s = document.createElement('span');
+    s.innerHTML = `<i class="sw" style="background:var(--c-${k})"></i>`;
+    s.append(l); el.append(s);
+  }
+  if (withIo) {
+    for (const [cls, l] of [['io', 'RocksDB reading a file (pread)'], ['iocpu', 'RocksDB, other read work'], ['iow', 'RocksDB write'], ['wait', 'Engine thread parked or in a syscall'], ['sel', 'Selected time range']]) {
+      const s = document.createElement('span'); s.innerHTML = `<i class="sw ${cls}"></i>`; s.append(l); el.append(s);
+    }
+  }
+}
+legend(document.getElementById('legend-top'), false);
+legend(document.getElementById('legend-tl'), true);
+
+// ---------- block table ----------
+const FAM_ORDER = FAMILIES.map(f => f[0]);
+let maxEng = Math.max(1, ...D.blocks.map(b => b.npMs + b.fcuMs));
+let selected = 0;
+(function blockTable() {
+  const t = document.getElementById('blocks');
+  t.innerHTML = `<thead><tr><th>Block</th><th class="num">Txs</th><th class="num">Parallel</th><th class="num">Mgas</th><th class="num">Exec (log)</th><th class="num">newPayload</th><th class="num">FCU</th><th>Engine thread: newPayload | FCU</th></tr></thead><tbody></tbody>`;
+  const tb = t.tBodies[0];
+  D.blocks.forEach((b, i) => {
+    const tr = document.createElement('tr');
+    tr.tabIndex = 0; tr.dataset.i = i;
+    tr.innerHTML = `<td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="bar"><div class="stack"></div></td>`;
+    const c = tr.children;
+    c[0].textContent = '#' + fmt(b.num);
+    c[1].textContent = fmt(b.tx);
+    c[2].textContent = b.parallelPct >= 0 ? fmt(b.parallelPct, 1) + '%' : '–';
+    c[3].textContent = fmt(b.gas / 1e6, 1);
+    c[4].textContent = fmt(b.execMs, 1) + ' ms';
+    c[5].textContent = fmt(b.npMs) + ' ms';
+    c[6].textContent = b.fcuMs ? fmt(b.fcuMs) + ' ms' : '–';
+    const st = c[7].firstChild;
+    const W = 100 / maxEng;
+    for (const req of ['np', 'fcu']) {
+      for (const f of FAM_ORDER) {
+        const ms = b.eng.fam[req + ':' + f];
+        if (!ms) continue;
+        const i2 = document.createElement('i');
+        i2.style.width = (ms * W) + '%';
+        i2.style.background = `var(--c-${f})`;
+        i2.title = `${req === 'np' ? 'newPayload' : 'FCU'} · ${FAM_LABEL[f]}: ${fmt(ms)} ms`;
+        st.append(i2);
+      }
+      if (req === 'np') { const g = document.createElement('i'); g.className = 'brk'; st.append(g); }
+    }
+    tr.addEventListener('click', () => select(i));
+    tr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(i); } });
+    tb.append(tr);
+  });
+})();
+
+// ---------- timeline ----------
+const canvas = document.getElementById('tl');
+const ctx = canvas.getContext('2d');
+const tip = document.getElementById('tip');
+let layout = null;
+const LABEL_W = 178, BREAK_W = 34, AXIS_H = 34, MARK_H = 18;
+
+const GROUPS = [
+  [/^engine-ordered-execution/, 'Engine API thread', 'single'],
+  [/^besu-block-cpu/, 'Parallel tx workers · besu-block-cpu', 'expanded'],
+  [/^ForkJoinPool-\d+-worker/, 'Trie node prefetch · ForkJoinPool', 'collapsed'],
+  [/^besu-block-account-trie/, 'Account trie · besu-block-account-trie', 'collapsed'],
+  [/^besu-block-storage-trie/, 'Storage trie · besu-block-storage-trie', 'collapsed'],
+  [/^(GC Thread|G1 )/, 'GC threads', 'collapsed'],
+];
+const expanded = new Map();
+function groupOf(name) {
+  for (const [re, label, mode] of GROUPS) if (re.test(name)) return { key: label, label, mode };
+  const base = short(name).replace(/[-#\s]?\d+$/, '');
+  return { key: 'o:' + base, label: base, mode: 'collapsed', other: true };
+}
+function lanesFor(b) {
+  const showOther = document.getElementById('opt-other').checked;
+  const busyN = t => t.s.filter(s => busyAct(s[3]) && inSegs(b.segs, s[0] / 10)).length;
+  const groups = new Map();
+  for (const t of b.threads) {
+    const g = groupOf(t.name);
+    if (!groups.has(g.key)) groups.set(g.key, { ...g, threads: [], busy: 0 });
+    const G = groups.get(g.key);
+    G.threads.push(t); G.busy += busyN(t);
+  }
+  const order = GROUPS.map(g => g[1]);
+  const list = [...groups.values()].filter(G => G.busy > 0 || G.mode === 'single');
+  list.sort((x, y) => {
+    const ix = order.indexOf(x.key), iy = order.indexOf(y.key);
+    if (ix >= 0 || iy >= 0) return (ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy);
+    return y.busy - x.busy;
+  });
+  const lanes = [];
+  const byName = (a, c) => a.name.localeCompare(c.name, 'en', { numeric: true });
+  let otherHeader = false;
+  for (const G of list) {
+    if (G.other && !showOther) continue;
+    if (G.other && G.busy < 2) continue;
+    if (G.other && !otherHeader) { lanes.push({ kind: 'section', label: 'Other busy threads', h: 22 }); otherHeader = true; }
+    if (G.mode === 'single') { for (const t of G.threads) lanes.push({ kind: 'engine', t, h: 30, label: short(t.name) }); continue; }
+    const busyThreads = G.threads.filter(t => busyN(t) > 0).sort(byName);
+    const isOpen = expanded.has(G.key) ? expanded.get(G.key) : G.mode === 'expanded';
+    if (busyThreads.length === 1 && G.other) { lanes.push({ kind: 'thread', t: busyThreads[0], h: 9, label: short(busyThreads[0].name) }); continue; }
+    lanes.push({ kind: 'group', key: G.key, open: isOpen, label: G.label, n: G.threads.length, nb: busyThreads.length, h: 20 });
+    if (isOpen) for (const t of busyThreads) lanes.push({ kind: 'thread', t, h: 9, label: short(t.name) });
+    else lanes.push({ kind: 'hist', key: G.key, ts: G.threads, h: 26, label: `${busyThreads.length} of ${G.threads.length} busy` });
+  }
+  return lanes;
+}
+
+function axisFor(b, width) {
+  const segs = b.segs;
+  const total = sum(segs.map(s => s[1] - s[0]));
+  const plotW = Math.max(200, width - LABEL_W - 12 - BREAK_W * (segs.length - 1));
+  const k = plotW / total;
+  const parts = [];
+  let x = LABEL_W;
+  for (const s of segs) { parts.push({ a: s[0], b: s[1], x0: x, x1: x + (s[1] - s[0]) * k }); x += (s[1] - s[0]) * k + BREAK_W; }
+  return {
+    k, parts,
+    x(t) { for (const p of parts) if (t >= p.a && t <= p.b) return p.x0 + (t - p.a) * k; return null; },
+    t(px) { for (const p of parts) if (px >= p.x0 && px <= p.x1) return p.a + (px - p.x0) / k; return null; },
+    xc(t) { for (const p of parts) { if (t < p.a) return p.x0; if (t <= p.b) return p.x0 + (t - p.a) * k; } return parts[parts.length - 1].x1; },
+    tc(px) { for (const p of parts) { if (px < p.x0) return p.a; if (px <= p.x1) return p.a + (px - p.x0) / k; } return parts[parts.length - 1].b; },
+  };
+}
+
+function draw() {
+  const b = D.blocks[selected];
+  const scroller = document.getElementById('tl-scroll');
+  const width = Math.max(scroller.clientWidth, 860);
+  const lanes = lanesFor(b);
+  const ax = axisFor(b, width);
+  let y = AXIS_H + MARK_H;
+  for (const l of lanes) { l.y = y; y += l.h + (l.kind === 'group' ? 0 : 3); }
+  const height = y + 10;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = width * dpr; canvas.height = height * dpr;
+  canvas.style.width = width + 'px'; canvas.style.height = height + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = COL.surface; ctx.fillRect(0, 0, width, height);
+
+  // grid + ticks, relative to rememberBlock start
+  const step = niceStep(25 / ax.k);
+  ctx.font = `11px ${css('--f-mono')}`;
+  ctx.textBaseline = 'alphabetic';
+  for (const p of ax.parts) {
+    const rel0 = p.a - b.execStart, rel1 = p.b - b.execStart;
+    for (let r = Math.ceil(rel0 / step) * step; r <= rel1; r += step) {
+      const x = p.x0 + (r - rel0) * ax.k;
+      ctx.strokeStyle = COL.grid; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, AXIS_H - 4); ctx.lineTo(Math.round(x) + 0.5, height - 6); ctx.stroke();
+      ctx.fillStyle = COL.muted; ctx.textAlign = 'center';
+      ctx.fillText(fmt(r) , x, AXIS_H - 9);
+    }
+  }
+  ctx.textAlign = 'left'; ctx.fillStyle = COL.muted;
+  ctx.font = `11px ${css('--f-cond')}`;
+  ctx.fillText('ms from rememberBlock start', 8, AXIS_H - 9);
+  // breaks
+  for (let i = 1; i < ax.parts.length; i++) {
+    const x0 = ax.parts[i - 1].x1, x1 = ax.parts[i].x0;
+    ctx.fillStyle = COL.bg; ctx.fillRect(x0 + 2, AXIS_H - 4, x1 - x0 - 4, height - AXIS_H);
+    ctx.strokeStyle = COL.axis; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(x0 + 2.5, AXIS_H - 4); ctx.lineTo(x0 + 2.5, height - 6); ctx.moveTo(x1 - 2.5, AXIS_H - 4); ctx.lineTo(x1 - 2.5, height - 6); ctx.stroke();
+    ctx.setLineDash([]);
+    const gap = ax.parts[i].a - ax.parts[i - 1].b;
+    ctx.save(); ctx.translate((x0 + x1) / 2 + 4, AXIS_H + MARK_H + 6); ctx.rotate(Math.PI / 2);
+    ctx.fillStyle = COL.muted; ctx.font = `11px ${css('--f-cond')}`; ctx.textAlign = 'left';
+    ctx.fillText(`${fmt(gap)} ms cut (CL turnaround)`, 0, 0); ctx.restore();
+  }
+  // log markers
+  const marks = [[b.execStart, 'exec start'], [b.logT, 'Imported log'], [b.fcuT, 'FCU log']];
+  if (b.fcuFirst != null) marks.push([b.fcuFirst, 'FCU first sample']);
+  ctx.font = `11px ${css('--f-cond')}`;
+  for (const [t, l] of marks) {
+    if (t == null || t < 0) continue;
+    const x = ax.x(t); if (x == null) continue;
+    ctx.strokeStyle = COL.ink; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+    ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, AXIS_H + 2); ctx.lineTo(Math.round(x) + 0.5, height - 6); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = COL.ink; ctx.textAlign = 'center'; ctx.fillText(l, x, AXIS_H + 12);
+  }
+  ctx.textAlign = 'left';
+
+  const showIdle = document.getElementById('opt-idle').checked;
+  for (const l of lanes) {
+    if (l.kind === 'section' || l.kind === 'group') {
+      ctx.fillStyle = COL.ink; ctx.font = `600 11px ${css('--f-cond')}`;
+      const caret = l.kind === 'group' ? (l.open ? '▾ ' : '▸ ') : '';
+      ctx.fillText(caret + l.label.toUpperCase(), 8, l.y + 14);
+      if (l.kind === 'group') {
+        const w0 = ctx.measureText(caret + l.label.toUpperCase()).width;
+        ctx.fillStyle = COL.muted; ctx.font = `11px ${css('--f-cond')}`;
+        ctx.fillText(`${l.nb} of ${l.n} threads busy · click to ${l.open ? 'collapse' : 'expand'}`, 16 + w0, l.y + 14);
+      }
+      ctx.strokeStyle = COL.grid; ctx.beginPath(); ctx.moveTo(8, l.y + 18.5); ctx.lineTo(width - 8, l.y + 18.5); ctx.stroke();
+      continue;
+    }
+    ctx.fillStyle = COL['ink-2']; ctx.font = `${l.kind === 'engine' ? '600 12px' : '11px'} ${css('--f-cond')}`;
+    if (l.kind === 'hist') { ctx.fillText(l.label, 8, l.y + 16); drawHist(b, l, ax); continue; }
+    ctx.fillText(l.label, 8, l.y + Math.min(l.h, 14) / 2 + 4);
+    const engine = l.kind === 'engine';
+    const rowH = engine ? 18 : l.h;
+    for (const s of l.t.s) {
+      const tt = s[0] / 10; const x = ax.x(tt); if (x == null) continue;
+      const w = Math.max(1, IV * s[5] * ax.k - 0.5);
+      const fam = PH_FAM[s[2]];
+      const act = s[3];
+      if (!busyAct(act)) {
+        if (engine && fam !== 'other') { ctx.fillStyle = COL.wait; ctx.fillRect(x, l.y, w, rowH); }
+        else if (showIdle && fam !== 'other') { ctx.globalAlpha = 0.22; ctx.fillStyle = COL[fam]; ctx.fillRect(x, l.y, w, rowH); ctx.globalAlpha = 1; }
+        continue;
+      }
+      ctx.fillStyle = COL[fam]; ctx.fillRect(x, l.y, w, rowH);
+      if (act === 1 || act === 2) {
+        ctx.fillStyle = act === 2 ? COL['io-write'] : (s[6] === 1 || s[6] === 11 || s[6] == null) ? COL['io-read'] : COL.muted;
+        if (engine) ctx.fillRect(x, l.y + rowH + 2, w, 8);
+        else ctx.fillRect(x, l.y + rowH - 3, w, 3);
+      }
+    }
+    if (engine) {
+      ctx.fillStyle = COL.muted; ctx.font = `10px ${css('--f-cond')}`;
+      ctx.fillText('in RocksDB', 8, l.y + rowH + 10);
+    }
+  }
+  layout = { lanes, ax, b, width, height };
+  drawOverlay();
+}
+function buckets(b, l) {
+  if (l._b && l._b.blk === b) return l._b.map;
+  const map = new Map();
+  for (const t of l.ts) for (const s of t.s) {
+    if (!busyAct(s[3])) continue;
+    const key = Math.floor(s[0] / 10 / IV);
+    let e = map.get(key); if (!e) { e = { n: 0, db: 0, fam: {}, ph: {} }; map.set(key, e); }
+    e.n++; if (s[3] === 1 || s[3] === 2) e.db++;
+    const f = PH_FAM[s[2]]; e.fam[f] = (e.fam[f] || 0) + 1;
+    const p = D.phases[s[2]]; e.ph[p] = (e.ph[p] || 0) + 1;
+  }
+  l._b = { blk: b, map };
+  return map;
+}
+function drawHist(b, l, ax) {
+  const map = buckets(b, l);
+  const n = l.ts.length;
+  ctx.strokeStyle = COL.grid; ctx.beginPath(); ctx.moveTo(LABEL_W, l.y + l.h + 0.5); ctx.lineTo(ax.parts[ax.parts.length - 1].x1, l.y + l.h + 0.5); ctx.stroke();
+  for (const [key, e] of map) {
+    const x = ax.x(key * IV); if (x == null) continue;
+    const w = Math.max(1, IV * ax.k - 0.5);
+    let y0 = l.y + l.h;
+    const unit = l.h / n;
+    // threads inside RocksDB at the bottom, in ink, then the rest by phase family
+    if (e.db) { const hh = e.db * unit; ctx.fillStyle = COL['io-read']; ctx.fillRect(x, y0 - hh, w, hh); y0 -= hh; }
+    const dbLeft = { ...e.fam };
+    let rest = e.db;
+    for (const f of FAM_ORDER) {
+      let c = e.fam[f] || 0;
+      const take = Math.min(c, rest); c -= take; rest -= take;
+      if (!c) continue;
+      const hh = c * unit; ctx.fillStyle = COL[f]; ctx.fillRect(x, y0 - hh, w, hh); y0 -= hh;
+    }
+  }
+}
+function niceStep(raw) {
+  const e = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 5, 10]) if (raw <= m * e) return m * e;
+  return 10 * e;
+}
+
+function hit(ev) {
+  if (!layout) return null;
+  const r = canvas.getBoundingClientRect();
+  const px = ev.clientX - r.left, py = ev.clientY - r.top;
+  const lane = layout.lanes.find(l => py >= l.y && py <= l.y + l.h + (l.kind === 'engine' ? 12 : 2));
+  if (!lane) return null;
+  if (lane.kind === 'group') return { lane };
+  const t = layout.ax.t(px); if (t == null) return null;
+  if (lane.kind === 'hist') {
+    const key = Math.floor(t / IV);
+    const e = buckets(layout.b, lane).get(key);
+    return e ? { lane, bucket: e, t: key * IV } : null;
+  }
+  if (!lane.t) return null;
+  let best = null, bd = Infinity;
+  for (const s of lane.t.s) {
+    const st = s[0] / 10;
+    if (t >= st - 0.5 && t <= st + IV * s[5] + 0.5) { const d = Math.abs(st + IV / 2 - t); if (d < bd) { bd = d; best = s; } }
+  }
+  return best ? { lane, s: best } : null;
+}
+const MARKERS = ['processTransactionSequentially', 'getProcessingResult', 'runTransaction', 'StateRootCommitter', 'persist', 'org.rocksdb'];
+const simple = f => {
+  if (f.includes(' → ')) return f.split(' → ').map(simple).join(' → ');
+  if (f.startsWith('/') || /\.so(\.\d+)*( ×\d+)?$/.test(f)) return f.slice(f.lastIndexOf('/') + 1);
+  if (f.includes('::')) { const p = f.split('::'); return p.slice(-2).join('::'); }
+  f = f.replace(/\.0x[0-9a-f]+(?=\.)/, ''); // hidden lambda classes: Outer$$Lambda.0x….call
+  const m = f.match(/([^.]+\.[^.]+(?: ×\d+)?)$/); return m ? m[1] : f;
+};
+const isJava = f => !f.includes('::') && !f.startsWith('/') && /^[\w$]+(\.[\w$<>]+)+( ×\d+)?$/.test(f);
+const keyOf = f => f.replace(/ ×\d+$/, '');
+const IOK = D.ioKinds || ['none'];
+function stackHtml(s, limit, compact) {
+  const ids = D.stacks[s[1]];
+  const lines = [];
+  for (let i = ids.length - 1; i >= 0 && lines.length < limit; i--) {
+    const f = compact ? simple(D.frames[ids[i]]) : D.frames[ids[i]];
+    const hitF = MARKERS.some(m => f.includes(m));
+    lines.push(`<span class="${hitF ? 'hit' : ''}">${esc(f)}</span>`);
+  }
+  if (ids.length > limit) lines.push(`… ${ids.length - limit} more frames`);
+  return lines.join('\n');
+}
+function esc(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function sampleHead(h) {
+  const b = layout.b, s = h.s, p = D.phases[s[2]];
+  const rel = s[0] / 10 - b.execStart;
+  const st = D.states[s[4]];
+  return `<b>${esc(h.lane.label)}</b><span class="mono">${fmt(rel, 1)} ms</span>` +
+    `<span class="chip"><i class="sw" style="background:var(--c-${PH_FAM[s[2]]})"></i>${esc(PHASE_LABEL[p] || p)}</span>` +
+    `<span class="chip">${ACT[s[3]]}${(s[3] === 1 || s[3] === 2) && s[6] ? ': ' + esc(IOK[s[6]]) : ''}</span>` + (st && st !== '-' ? `<span class="chip">${esc(st)}</span>` : '') +
+    (s[5] > 1 ? `<span class="chip">×${s[5]} samples</span>` : '');
+}
+canvas.addEventListener('mousemove', ev => {
+  const h = hit(ev);
+  canvas.style.cursor = h && h.lane.kind === 'group' ? 'pointer' : 'default';
+  if (!h || h.lane.kind === 'group') { tip.hidden = true; return; }
+  if (h.bucket) {
+    const e = h.bucket, rel = h.t - layout.b.execStart;
+    const rows = Object.entries(e.ph).sort((x, y) => y[1] - x[1]).map(([p, c]) =>
+      `<div><i class="fam-dot" style="background:var(--c-${family(p)})"></i>${c} × ${esc(PHASE_LABEL[p] || p)}</div>`).join('');
+    tip.innerHTML = `<div class="t-head"><b>${esc(h.lane.label)}</b><span class="mono">${fmt(rel, 0)}…${fmt(rel + IV, 0)} ms</span>` +
+      `<span class="chip">${e.n} busy</span><span class="chip">${e.db} in RocksDB</span></div>${rows}<div class="sub" style="margin-top:6px">Expand the group to see each thread's stack.</div>`;
+  } else {
+    tip.innerHTML = `<div class="t-head">${sampleHead(h)}</div><div class="frames">${stackHtml(h.s, 22, true)}</div>`;
+  }
+  tip.hidden = false;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + tw > window.innerWidth - 8) x = ev.clientX - tw - 14;
+  if (y + th > window.innerHeight - 8) y = Math.max(8, ev.clientY - th - 14);
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+});
+canvas.addEventListener('mouseleave', () => { tip.hidden = true; });
+const ov = document.getElementById('tl-ov');
+const octx = ov.getContext('2d');
+let range = null, drag = null, suppressClick = false;
+function drawOverlay(tmp) {
+  if (!layout) return;
+  const dpr = window.devicePixelRatio || 1;
+  ov.width = layout.width * dpr; ov.height = layout.height * dpr;
+  ov.style.width = layout.width + 'px'; ov.style.height = layout.height + 'px';
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  octx.clearRect(0, 0, layout.width, layout.height);
+  const r = tmp || range; if (!r) return;
+  const x0 = layout.ax.xc(r[0]), x1 = layout.ax.xc(r[1]);
+  octx.fillStyle = COL.sel; octx.fillRect(x0, AXIS_H - 4, x1 - x0, layout.height - AXIS_H);
+  octx.strokeStyle = COL.ink; octx.lineWidth = 1;
+  octx.beginPath(); octx.moveTo(Math.round(x0) + 0.5, AXIS_H - 4); octx.lineTo(Math.round(x0) + 0.5, layout.height - 6);
+  octx.moveTo(Math.round(x1) - 0.5, AXIS_H - 4); octx.lineTo(Math.round(x1) - 0.5, layout.height - 6); octx.stroke();
+}
+const canvasX = ev => ev.clientX - canvas.getBoundingClientRect().left;
+const laneAt = py => layout && layout.lanes.find(l => py >= l.y && py <= l.y + l.h + (l.kind === 'engine' ? 12 : 2));
+canvas.addEventListener('mousedown', ev => {
+  if (ev.button !== 0 || !layout || canvasX(ev) < LABEL_W) return;
+  drag = { x0: canvasX(ev), moved: false, cur: null };
+  ev.preventDefault();
+});
+window.addEventListener('mousemove', ev => {
+  if (!drag) return;
+  const px = Math.max(LABEL_W, Math.min(layout.width, canvasX(ev)));
+  if (Math.abs(px - drag.x0) > 4) drag.moved = true;
+  if (!drag.moved) return;
+  tip.hidden = true;
+  drag.cur = [layout.ax.tc(Math.min(px, drag.x0)), layout.ax.tc(Math.max(px, drag.x0))];
+  drawOverlay(drag.cur);
+});
+window.addEventListener('mouseup', () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.moved) {
+    suppressClick = true;
+    if (d.cur && d.cur[1] - d.cur[0] >= 1) {
+      range = d.cur;
+      setRequest((range[0] + range[1]) / 2 < requestSplit(layout.b) ? 'np' : 'fcu');
+      methodsChanged(true);
+    } else drawOverlay();
+  }
+});
+canvas.addEventListener('click', ev => {
+  if (suppressClick) { suppressClick = false; return; }
+  const r = canvas.getBoundingClientRect();
+  const px = ev.clientX - r.left, py = ev.clientY - r.top;
+  const lane = laneAt(py); if (!lane) return;
+  if (lane.kind === 'group') { expanded.set(lane.key, !lane.open); draw(); return; }
+  if (px < LABEL_W) {
+    if (lane.kind === 'engine') setScope('g:' + GROUPS[0][1]);
+    else if (lane.kind === 'hist') setScope('g:' + lane.key);
+    else if (lane.t) setScope('t:' + lane.t.name);
+    return;
+  }
+  const h = hit(ev); if (!h || !h.s) return;
+  const el = document.getElementById('pinned');
+  el.innerHTML = `<h3 style="margin-bottom:6px">Pinned sample</h3><div class="t-head" style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px;font-size:var(--s-sm)">${sampleHead(h)}</div><div class="frames">${stackHtml(h.s, 400)}</div>`;
+});
+
+// ---------- where the time went ----------
+const flame = document.getElementById('flame');
+const fctx = flame.getContext('2d');
+const ROW = 17;
+let scope = 'g:' + GROUPS[0][1];
+let fstate = { root: null, zoom: null, hl: null, rects: [], total: 0 };
+let topSort = 'self';
+let request = 'np';
+// newPayload owns the window up to halfway between its end and the start of FCU
+function requestSplit(b) {
+  const npEnd = Math.max(b.npLast, b.logT);
+  const fcuStart = b.fcuFirst != null ? b.fcuFirst : b.fcuT >= 0 ? b.fcuT : Infinity;
+  return isFinite(fcuStart) ? (npEnd + fcuStart) / 2 : Infinity;
+}
+function setRequest(r) {
+  request = r;
+  document.getElementById('req-np').setAttribute('aria-pressed', String(r === 'np'));
+  document.getElementById('req-fcu').setAttribute('aria-pressed', String(r === 'fcu'));
+}
+document.getElementById('req-np').addEventListener('click', () => { setRequest('np'); methodsChanged(true); });
+document.getElementById('req-fcu').addEventListener('click', () => { setRequest('fcu'); methodsChanged(true); });
+const synth = [];
+const nameOf = id => id >= 0 ? D.frames[id] : id === -1 ? 'all selected samples' : synth[-2 - id];
+function synthId(name) { let i = synth.indexOf(name); if (i < 0) { synth.push(name); i = synth.length - 1; } return -2 - i; }
+function inScope(t) {
+  if (scope === 'all') return true;
+  if (scope.startsWith('g:')) return groupOf(t.name).key === scope.slice(2);
+  return t.name === scope.slice(2);
+}
+function scopeLabel(v) {
+  if (v === 'all') return 'All threads';
+  if (v.startsWith('g:')) { const k = v.slice(2); return k.startsWith('o:') ? k.slice(2) : k; }
+  return 'Thread ' + short(v.slice(2));
+}
+function fillScopes(b) {
+  const sel = document.getElementById('m-scope');
+  const keys = new Set();
+  for (const t of b.threads) if (t.s.some(s => busyAct(s[3]) && inSegs(b.segs, s[0] / 10))) keys.add(groupOf(t.name).key);
+  const opts = GROUPS.map(g => 'g:' + g[1]).filter(v => keys.has(v.slice(2)) || v === 'g:' + GROUPS[0][1]);
+  opts.push('all');
+  if (!opts.includes(scope)) opts.push(scope);
+  sel.innerHTML = '';
+  for (const v of opts) { const o = document.createElement('option'); o.value = v; o.textContent = scopeLabel(v); sel.append(o); }
+  sel.value = scope;
+}
+function setScope(v) { scope = v; fillScopes(D.blocks[selected]); methodsChanged(true); document.getElementById('methods').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+document.getElementById('m-scope').addEventListener('change', e => { scope = e.target.value; methodsChanged(true); });
+document.getElementById('m-clear').addEventListener('click', () => { range = null; drawOverlay(); methodsChanged(true); });
+document.getElementById('m-idle').addEventListener('change', () => methodsChanged(true));
+document.getElementById('m-java').addEventListener('change', () => methodsChanged(true));
+
+function selectedSamples(b) {
+  const idle = document.getElementById('m-idle').checked;
+  const split = requestSplit(b);
+  const out = [];
+  for (const t of b.threads) {
+    if (!inScope(t)) continue;
+    for (const s of t.s) {
+      const tt = s[0] / 10;
+      if (!inSegs(b.segs, tt)) continue;
+      if (range && (tt + IV <= range[0] || tt >= range[1])) continue;
+      if (request === 'np' ? tt >= split : tt < split) continue;
+      if (!idle && !busyAct(s[3])) continue;
+      out.push([s, t]);
+    }
+  }
+  return out;
+}
+// where a sample's own time is counted: its deepest frame, skipping unsymbolised library frames
+// (libc on the node) so they count on the function that called into them, or with the checkbox
+// set, its deepest Java frame
+function leafIndex(ids) {
+  let li = ids.length - 1;
+  if (document.getElementById('m-java').checked) {
+    for (let i = li; i >= 0; i--) if (isJava(D.frames[ids[i]])) return i;
+    return li;
+  }
+  while (li > 0 && D.frames[ids[li]].startsWith('/')) li--;
+  return li;
+}
+function buildTree(samples) {
+  const root = { id: -1, v: 0, c: new Map(), fam: {}, parent: null };
+  const byGroup = scope === 'all';
+  for (const [s, t] of samples) {
+    const ms = IV * s[5], f = PH_FAM[s[2]];
+    let n = root; n.v += ms; n.fam[f] = (n.fam[f] || 0) + ms;
+    const stack = D.stacks[s[1]];
+    const ids = stack.slice(0, leafIndex(stack) + 1);
+    if (byGroup) ids.unshift(synthId(groupOf(t.name).label));
+    for (const id of ids) {
+      let c = n.c.get(id);
+      if (!c) { c = { id, v: 0, c: new Map(), fam: {}, parent: n }; n.c.set(id, c); }
+      c.v += ms; c.fam[f] = (c.fam[f] || 0) + ms; n = c;
+    }
+  }
+  return root;
+}
+function dominant(fam) { let best = 'other', bv = -1; for (const [k, v] of Object.entries(fam)) if (v > bv) { bv = v; best = k; } return best; }
+function fitText(text, w) {
+  if (fctx.measureText(text).width <= w) return text;
+  let lo = 0, hi = text.length;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (fctx.measureText(text.slice(0, m) + '…').width <= w) lo = m; else hi = m - 1; }
+  return lo > 1 ? text.slice(0, lo) + '…' : '';
+}
+// a frame with exactly one callee holding all of its time only passes through; such runs share a bar
+function chainOf(n) {
+  const ch = [n];
+  if (n.id === -1) return ch;
+  for (let x = n; x.c.size === 1;) {
+    const c = x.c.values().next().value;
+    if (Math.abs(c.v - x.v) > 1e-6) break;
+    ch.push(c); x = c;
+  }
+  return ch;
+}
+function chainLabel(ch) {
+  const f = ch.map(n => simple(nameOf(n.id)));
+  if (f.length === 1) return f[0];
+  if (f.length === 2) return `${f[0]} › ${f[1]}`;
+  return `${f[0]} › ${f.length - 2} frame${f.length === 3 ? '' : 's'} › ${f[f.length - 1]}`;
+}
+function requestLabel() { return request === 'np' ? 'newPayload' : 'FCU'; }
+function drawFlame() {
+  const wrap = document.getElementById('flame-scroll');
+  const W = Math.max(wrap.clientWidth - 2, 480);
+  const root = fstate.root, zoom = fstate.zoom || root;
+  const top = zoom === root ? 0 : 1;
+  let maxD = 0;
+  (function md(n, d) {
+    if (d > maxD) maxD = d;
+    const last = chainOf(n).at(-1);
+    for (const c of last.c.values()) if (c.v / zoom.v * W >= 0.6) md(c, d + 1);
+  })(zoom, top);
+  const H = Math.max(ROW * 2, (maxD + 1) * ROW + 2);
+  const dpr = window.devicePixelRatio || 1;
+  flame.width = W * dpr; flame.height = H * dpr; flame.style.width = W + 'px'; flame.style.height = H + 'px';
+  fctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  fctx.fillStyle = COL.surface; fctx.fillRect(0, 0, W, H);
+  fctx.font = `11px ${css('--f-cond')}`; fctx.textBaseline = 'middle';
+  fstate.rects = [];
+  if (!root.v) { fctx.fillStyle = COL.muted; fctx.fillText(`No ${requestLabel()} samples in this selection.`, 8, ROW); return; }
+  const hlHit = ch => fstate.hl != null && ch.some(n => n.id >= 0 && keyOf(nameOf(n.id)) === fstate.hl);
+  const box = (ch, x, w, d) => {
+    const first = ch[0], last = ch.at(-1);
+    const y = d * ROW;
+    const java = first.id < 0 || isJava(nameOf(last.id));
+    let alpha = java ? 0.45 : 0.22;
+    if (fstate.hl != null) alpha = hlHit(ch) ? 0.95 : 0.1;
+    fctx.globalAlpha = alpha; fctx.fillStyle = COL[dominant(first.fam)] || COL.other;
+    fctx.fillRect(x + 0.5, y + 0.5, Math.max(0.5, w - 1), ROW - 1);
+    fctx.globalAlpha = 1;
+    if (w > 28) {
+      const label = first.id === -1 ? `${scopeLabel(scope)} · ${requestLabel()} · ${fmt(first.v)} ms` : `${chainLabel(ch)} · ${fmt(first.v)} ms`;
+      const t = fitText(label, w - 8);
+      if (t) { fctx.fillStyle = java ? COL.ink : COL['ink-2']; fctx.fillText(t, x + 4, y + ROW / 2 + 0.5); }
+    }
+    fstate.rects.push({ x, y, w, ch });
+  };
+  if (top) {
+    fctx.fillStyle = COL.bg; fctx.fillRect(0.5, 0.5, W - 1, ROW - 1);
+    fctx.fillStyle = COL['ink-2'];
+    fctx.fillText(fitText(`◂ ${scopeLabel(scope)} · ${requestLabel()} · ${fmt(root.v)} ms · zoomed to ${fmt(100 * zoom.v / root.v, 1)}%, click here to zoom out`, W - 8), 4, ROW / 2 + 0.5);
+    fstate.rects.push({ x: 0, y: 0, w: W, ch: [root], back: true });
+  }
+  (function rec(n, x, d) {
+    const ch = chainOf(n);
+    box(ch, x, n.v / zoom.v * W, d);
+    let cx = x;
+    for (const c of [...ch.at(-1).c.values()].sort((a, b2) => b2.v - a.v)) {
+      const cw = c.v / zoom.v * W;
+      if (cw >= 0.6) rec(c, cx, d + 1);
+      cx += cw;
+    }
+  })(zoom, 0, top);
+}
+function flameHit(ev) {
+  const r = flame.getBoundingClientRect();
+  const px = ev.clientX - r.left, py = ev.clientY - r.top;
+  for (let i = fstate.rects.length - 1; i >= 0; i--) {
+    const q = fstate.rects[i];
+    if (px >= q.x && px <= q.x + q.w && py >= q.y && py <= q.y + ROW) return q;
+  }
+  return null;
+}
+flame.addEventListener('mousemove', ev => {
+  const q = flameHit(ev);
+  if (!q || q.back) { tip.hidden = true; return; }
+  const n = q.ch[0], tot = fstate.root.v;
+  const names = q.ch.map(x => x.id === -1 ? 'all samples in the selection' : nameOf(x.id));
+  const list = names.length > 40 ? [...names.slice(0, 20), `… ${names.length - 40} more …`, ...names.slice(-20)] : names;
+  tip.innerHTML = `<div class="t-head"><span class="chip"><i class="sw" style="background:var(--c-${dominant(n.fam)})"></i>${esc(FAM_LABEL[dominant(n.fam)])}</span>` +
+    `<span class="mono">${fmt(n.v, 0)} ms · ${fmt(100 * n.v / tot, 1)}% of ${requestLabel()} selection</span>` +
+    (q.ch.length > 1 ? `<span class="chip">${q.ch.length} frames, caller first</span>` : '') + `</div>` +
+    `<div class="frames" style="color:var(--ink)">${list.map(esc).join('\n')}</div>`;
+  tip.hidden = false;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + tw > window.innerWidth - 8) x = ev.clientX - tw - 14;
+  if (y + th > window.innerHeight - 8) y = Math.max(8, ev.clientY - th - 14);
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+});
+flame.addEventListener('mouseleave', () => { tip.hidden = true; });
+flame.addEventListener('click', ev => {
+  const q = flameHit(ev); if (!q) return;
+  fstate.zoom = q.back || q.ch[0].id === -1 ? null : q.ch[0];
+  drawFlame();
+});
+
+function topTable(samples) {
+  const self = new Map(), total = new Map();
+  let all = 0;
+  for (const [s] of samples) {
+    const ms = IV * s[5]; all += ms;
+    const ids = D.stacks[s[1]];
+    const seen = new Set();
+    for (const id of ids) { const k = keyOf(D.frames[id]); if (!seen.has(k)) { seen.add(k); total.set(k, (total.get(k) || 0) + ms); } }
+    const lk = keyOf(D.frames[ids[leafIndex(ids)]]);
+    self.set(lk, (self.get(lk) || 0) + ms);
+  }
+  const keys = new Set([...self.keys()]);
+  if (topSort === 'total') for (const k of total.keys()) keys.add(k);
+  const rows = [...keys].map(k => [k, self.get(k) || 0, total.get(k) || 0])
+    .sort((a, b2) => topSort === 'self' ? b2[1] - a[1] : b2[2] - a[2]).slice(0, 40);
+  const t = document.getElementById('m-top');
+  let html = `<thead><tr><th>Method</th><th class="num sortable" data-sort="self"${topSort === 'self' ? ' aria-sort="descending"' : ''}>Self ms</th><th class="num">Self</th><th class="num sortable" data-sort="total"${topSort === 'total' ? ' aria-sort="descending"' : ''}>Total ms</th><th class="num">Total</th></tr></thead><tbody>`;
+  for (const [k, sv, tv] of rows) {
+    const sp = simple(k), pkg = k.endsWith(sp) ? k.slice(0, k.length - sp.length) : '';
+    html += `<tr data-k="${esc(k).replace(/"/g, '&quot;')}" aria-selected="${fstate.hl === k}" tabindex="0"><td class="m" title="${esc(k).replace(/"/g, '&quot;')}"><span class="pkg">${esc(pkg)}</span>${esc(sp)}</td>` +
+      `<td class="num">${sv ? fmt(sv) : '·'}</td><td class="num">${sv ? fmt(100 * sv / all, 1) + '%' : ''}</td><td class="num">${fmt(tv)}</td><td class="num">${fmt(100 * tv / all, 1)}%</td></tr>`;
+  }
+  if (!rows.length) html += `<tr><td colspan="5">No samples in this selection.</td></tr>`;
+  t.innerHTML = html + '</tbody>';
+  t.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => { topSort = th.dataset.sort; methodsChanged(false); }));
+  t.querySelectorAll('tbody tr[data-k]').forEach(tr => {
+    const on = () => { const k = tr.dataset.k; fstate.hl = fstate.hl === k ? null : k; drawFlame(); t.querySelectorAll('tbody tr').forEach(r2 => r2.setAttribute('aria-selected', String(r2.dataset.k === fstate.hl))); };
+    tr.addEventListener('click', on);
+    tr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); on(); } });
+  });
+}
+function rocksPanel(samples) {
+  const m = new Map(); let tot = 0;
+  for (const [s] of samples) {
+    if (s[3] !== 1 && s[3] !== 2) continue;
+    const ms = IV * s[5]; tot += ms;
+    const k = (s[3] === 2 ? 'write' : 'read') + '|' + (s[6] || 0);
+    m.set(k, (m.get(k) || 0) + ms);
+  }
+  const el = document.getElementById('m-rocks');
+  if (!tot) { el.innerHTML = `<span class="sub" style="grid-column:1/-1">No samples inside RocksDB in this selection.</span>`; return; }
+  const rows = [...m.entries()].sort((a, b2) => b2[1] - a[1]);
+  const max = rows[0][1];
+  let html = '';
+  for (const [k, ms] of rows) {
+    const [rw, kind] = k.split('|');
+    const label = `${rw === 'write' ? 'Write' : 'Read'}: ${IOK[+kind] || 'unclassified'}`;
+    const cls = rw === 'write' ? 'write' : +kind === 1 ? 'file' : '';
+    html += `<span>${esc(label)}</span><span><i class="bar ${cls}" style="display:block;width:${(100 * ms / max).toFixed(1)}%"></i></span><span class="n">${fmt(ms)} ms</span><span class="n">${fmt(100 * ms / tot)}%</span>`;
+  }
+  el.innerHTML = html;
+}
+function methodsChanged(rebuild) {
+  const b = D.blocks[selected];
+  document.getElementById('req-np-ms').textContent = fmt(b.npMs) + ' ms';
+  document.getElementById('req-fcu-ms').textContent = b.fcuMs ? fmt(b.fcuMs) + ' ms' : '–';
+  document.getElementById('req-fcu').disabled = !b.fcuMs;
+  if (!b.fcuMs && request === 'fcu') setRequest('np');
+  const samples = selectedSamples(b);
+  if (rebuild || !fstate.root) { fstate.root = buildTree(samples); fstate.zoom = null; }
+  const rc = document.getElementById('m-range');
+  rc.textContent = range ? `${fmt(range[0] - b.execStart)} to ${fmt(range[1] - b.execStart)} ms` : 'Whole window';
+  document.getElementById('m-clear').hidden = !range;
+  const threads = new Set(samples.map(x => x[1].name)).size;
+  document.getElementById('m-total').textContent =
+    `${requestLabel()}: ${fmt(fstate.root.v)} thread-ms in ${fmt(samples.length)} samples from ${threads} thread${threads === 1 ? '' : 's'}` +
+    (range ? ' in the selected time range.' : '. The button labels give the engine thread time of each request.');
+  drawFlame(); topTable(samples); rocksPanel(samples);
+}
+
+// ---------- per-block tables ----------
+const PHASE_ORDER = Object.keys(PHASE_LABEL);
+function phaseTable(b) {
+  const t = document.getElementById('phase-table');
+  let html = `<thead><tr><th>Phase</th><th class="num">ms</th><th class="num">Running</th><th class="num">In DB read</th><th class="num">In DB write</th><th class="num">Parked / syscall</th></tr></thead><tbody>`;
+  for (const [req, title] of [['np', 'newPayload'], ['fcu', 'FCU']]) {
+    const rows = Object.entries(b.eng[req]).sort((x, y) => PHASE_ORDER.indexOf(x[0]) - PHASE_ORDER.indexOf(y[0]));
+    if (!rows.length) continue;
+    const tot = [0, 0, 0, 0, 0];
+    for (const [, r] of rows) r.forEach((v, i) => tot[i] += v);
+    html += `<tr class="fam"><td>${title}</td>${tot.map(v => `<td class="num">${fmt(v)}</td>`).join('')}</tr>`;
+    for (const [p, r] of rows) {
+      html += `<tr class="sub"><td><i class="fam-dot" style="background:var(--c-${family(p)})"></i>${esc(PHASE_LABEL[p] || p)}</td>${r.map(v => `<td class="num">${v ? fmt(v) : '·'}</td>`).join('')}</tr>`;
+    }
+  }
+  t.innerHTML = html + '</tbody>';
+}
+function poolTable(b) {
+  const agg = new Map();
+  for (const th of b.threads) {
+    if (isEngine(th.name)) continue;
+    for (const s of th.s) {
+      if (!busyAct(s[3]) || !inSegs(b.segs, s[0] / 10)) continue;
+      const p = D.phases[s[2]];
+      if (p === 'other' || p === 'unknown') continue;
+      const r = agg.get(p) || { ms: 0, read: 0, write: 0, threads: new Set() };
+      const ms = IV * s[5];
+      r.ms += ms; if (s[3] === 1) r.read += ms; if (s[3] === 2) r.write += ms;
+      r.threads.add(th.name); agg.set(p, r);
+    }
+  }
+  const rows = [...agg.entries()].sort((x, y) => y[1].ms - x[1].ms);
+  let html = `<thead><tr><th>Work</th><th class="num">Threads</th><th class="num">Thread-ms</th><th class="num">In DB read</th><th class="num">In DB write</th></tr></thead><tbody>`;
+  for (const [p, r] of rows) html += `<tr><td><i class="fam-dot" style="background:var(--c-${family(p)})"></i>${esc(PHASE_LABEL[p] || p)}</td><td class="num">${r.threads.size}</td><td class="num">${fmt(r.ms)}</td><td class="num">${r.read ? fmt(r.read) : '·'}</td><td class="num">${r.write ? fmt(r.write) : '·'}</td></tr>`;
+  if (!rows.length) html += `<tr><td colspan="5">No busy samples outside the engine thread.</td></tr>`;
+  document.getElementById('pool-table').innerHTML = html + '</tbody>';
+}
+
+function select(i) {
+  selected = Math.max(0, Math.min(D.blocks.length - 1, i));
+  const b = D.blocks[selected];
+  document.querySelectorAll('#blocks tbody tr').forEach(tr => tr.setAttribute('aria-selected', String(+tr.dataset.i === selected)));
+  document.getElementById('d-title').textContent = `Block #${fmt(b.num)}`;
+  document.getElementById('d-sub').textContent =
+    `${b.hash} · ${fmt(b.tx)} tx · ${b.parallelPct >= 0 ? fmt(b.parallelPct, 1) + '% parallel' : ''} · ${fmt(b.gas / 1e6, 1)} Mgas · ${fmt(b.execMs, 1)} ms exec · ${fmt(b.mgas)} MGas/s`;
+  const segs = b.segs.map(s => `${fmt(s[1] - s[0])} ms`).join(' + ');
+  document.getElementById('d-axis-note').textContent = `Window ${segs}, ${PAD} ms padding, ${IV} ms per sample`;
+  range = null; fstate.hl = null;
+  draw(); phaseTable(b); poolTable(b);
+  fillScopes(b); methodsChanged(true);
+}
+document.getElementById('prev').addEventListener('click', () => select(selected - 1));
+document.getElementById('next').addEventListener('click', () => select(selected + 1));
+document.getElementById('opt-other').addEventListener('change', draw);
+document.getElementById('opt-idle').addEventListener('change', draw);
+let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { draw(); drawFlame(); }, 80); });
+const mq = window.matchMedia('(prefers-color-scheme: dark)');
+const recolor = () => { readColors(); draw(); drawFlame(); };
+mq.addEventListener?.('change', recolor);
+new MutationObserver(recolor).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+// notes
+document.getElementById('notes').innerHTML = D.meta.notes.map(n => `<p>${n}</p>`).join('');
+
+// open the heaviest block first
+let heavy = 0; D.blocks.forEach((b, i) => { if (b.npMs > D.blocks[heavy].npMs) heavy = i; });
+select(heavy);
+})();
+</script>
+</body>
+</html>

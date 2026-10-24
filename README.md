@@ -1,0 +1,63 @@
+# blockprof
+
+Profiles a running Besu with async-profiler and writes a self-contained HTML report with one timeline per imported block:
+- every thread's samples around each `engine_newPayload` and the `engine_forkchoiceUpdated` that follows it
+- phases on the engine thread, the parallel-tx workers and the trie pools
+- time inside RocksDB, split into file reads, block cache, decompression and locks
+- a "Where the time went" flame graph and method table for any thread, pool and time range
+
+The block windows come from Besu's own log lines: `Imported #… | … ms exec` and `FCU(VALID) | head: …`.
+
+## Build
+
+Needs a JDK 21+ for building only:
+
+```
+./build.sh          # writes blockprof.jar
+```
+
+Running needs only a Java 21+ runtime with `jdk.jfr`; the JRE Besu runs on is enough.
+
+## Record
+
+`record` passes everything after `--` to `asprof`, forces JFR output, and attaches to the Besu JVM. That is the single process running `org.hyperledger.besu.Besu`, or the one given with `--pid`.
+
+asprof has to run as the user of the Besu JVM, and that JVM writes the JFR, so `--out` must be writable by it:
+
+```
+sudo -u execution ~/blockprof/blockprof record --out /tmp/blockprof -- -d 300 -i 5ms -e wall --cstack vm
+```
+
+It writes four files next to each other:
+
+| File | Contents |
+|---|---|
+| `blockprof-<UTC time>.jfr` | the async-profiler capture |
+| `blockprof-<UTC time>.log` | only the `Imported #` / `FCU(` lines for the capture, ±60 s |
+| `blockprof-<UTC time>.properties` | asprof args, pid, host, start and end |
+| `blockprof-<UTC time>.html` | the report |
+
+Options:
+- `--log FILE`: the besu log, repeatable for rotated files. Default `/var/log/besu/besu.log`.
+- `--pad MS`: padding around each newPayload and FCU window. Default 50.
+- `--asprof PATH`: default is `asprof` on `PATH`, else the newest `/opt/async-profiler*/bin/asprof` or `~/opt/async-profiler*/bin/asprof`.
+
+async-profiler arguments that matter for the report:
+- `-e wall`: every thread, including parked ones. `-e cpu` works too, but only shows time on CPU.
+- `-i 5ms` or smaller: a newPayload of 50 ms gets 10 samples per thread at 5 ms.
+- `--cstack vm`: keeps native frames, which the RocksDB split needs. On ssh besu, `--cstack vm` survived 5-minute runs on 2026-10-24, but the default cstack has crashed the JVM there (Go code in ckzg), and so did an earlier `--cstack vm` run. Keep runs short.
+
+## Report
+
+Rebuilds the HTML from a JFR, for example after copying the files to a laptop:
+
+```
+blockprof report --jfr blockprof-20261024-043832.jfr
+blockprof report --jfr x.jfr --log besu.log --log besu.log.1 --out x.html
+```
+
+Next to a JFR from `record`, the `.log` and `.properties` files are picked up automatically. Otherwise `--log` is required.
+
+Other options:
+- `--event auto|wall|cpu`: which sample event to use when the JFR has both.
+- `--interval MS`: the sample interval, if it can't be inferred from the samples.

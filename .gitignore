@@ -1,0 +1,7 @@
+build/
+*.jar
+*.jfr
+*.html
+!res/report.html
+*.log
+*.properties
