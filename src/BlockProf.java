@@ -22,13 +22,18 @@ public final class BlockProf {
   static final String USAGE =
       """
       usage:
-        blockprof record [--pid N] [--log FILE]... [--out DIR] [--pad MS] [--asprof PATH] -- <asprof args>
-        blockprof report --jfr FILE [--log FILE]... [--out FILE] [--pad MS] [--event auto|wall|cpu] [--interval MS]
+        blockprof record [--pid N] [--log FILE]... [--out DIR] [--pad MS] [--asprof PATH]
+                         [--proc-threads PREFIX,...|none] [--proc-interval-us N] -- <asprof args>
+        blockprof report --jfr FILE [--log FILE]... [--proc FILE] [--out FILE] [--pad MS]
+                         [--event auto|wall|cpu] [--interval MS]
 
       record  runs asprof with the given arguments against Besu, writing JFR, then writes the report.
               The pid defaults to the one process running org.hyperledger.besu.Besu, the log to
               /var/log/besu/besu.log. asprof must run as the user of the Besu JVM, and that user
               writes the files, so pick an --out it can write to.
+              While asprof runs, the per-thread I/O and scheduler counters of the threads whose names
+              start with --proc-threads (default engine-ordered-, the engine API thread) are read every
+              --proc-interval-us (default 1000), so the report can tell disk reads from page-cache hits.
               example: sudo -u execution blockprof record --out /tmp/blockprof -- -d 300 -i 5ms -e wall --cstack vm
 
       report  builds the HTML from a JFR and the besu log lines that cover it. Next to a JFR from
@@ -77,6 +82,8 @@ public final class BlockProf {
     Path outDir = Path.of(".");
     long pad = 50;
     String asprof = null;
+    List<String> procThreads = List.of("engine-ordered-");
+    long procIntervalUs = 1000;
     List<String> ap = null;
     for (int i = 0; i < args.size(); i++) {
       String a = args.get(i);
@@ -90,6 +97,11 @@ public final class BlockProf {
         case "--out" -> outDir = Path.of(value(args, ++i, a));
         case "--pad" -> pad = Long.parseLong(value(args, ++i, a));
         case "--asprof" -> asprof = value(args, ++i, a);
+        case "--proc-threads" -> {
+          String v = value(args, ++i, a);
+          procThreads = v.equals("none") ? List.of() : List.of(v.split(","));
+        }
+        case "--proc-interval-us" -> procIntervalUs = Long.parseLong(value(args, ++i, a));
         default -> throw new UsageException("unknown option " + a + " (asprof arguments go after --)");
       }
     }
@@ -150,10 +162,37 @@ public final class BlockProf {
     cmd.add(asprofPath);
     cmd.addAll(ap);
     cmd.add(pid);
+    ProcSampler sampler = null;
+    Thread samplerThread = null;
+    Path procFile = Path.of(base + ".proc.csv");
+    if (!procThreads.isEmpty()) {
+      sampler = new ProcSampler(pid, procThreads, procIntervalUs * 1000, procFile);
+      try {
+        List<String[]> tids = sampler.probe();
+        System.err.println(
+            "blockprof: reading I/O counters of "
+                + tids.stream().map(t -> t[1] + " (" + t[0] + ")").toList()
+                + " every " + procIntervalUs + " us");
+        samplerThread = new Thread(sampler, "blockprof-proc");
+        samplerThread.setDaemon(true);
+        samplerThread.start();
+      } catch (IOException e) {
+        System.err.println("blockprof: warning: no disk/page-cache split: " + e.getMessage());
+        sampler = null;
+      }
+    }
+
     System.err.println("blockprof: " + String.join(" ", cmd));
     Instant start = Instant.now();
     int rc = new ProcessBuilder(cmd).inheritIO().start().waitFor();
     Instant end = Instant.now();
+    if (sampler != null) {
+      sampler.stop();
+      samplerThread.join();
+      if (sampler.error() != null) {
+        System.err.println("blockprof: warning: I/O counter sampling stopped: " + sampler.error());
+      }
+    }
     boolean alive = Files.exists(Path.of("/proc", pid));
     if (!alive) {
       System.err.println("blockprof: warning: pid " + pid + " is gone, the JVM died during the capture");
@@ -197,13 +236,15 @@ public final class BlockProf {
       p.store(w, "blockprof record");
     }
 
-    writeReport(jfr, List.of(slice), Path.of(base + ".html"), pad, "auto", null, p);
+    writeReport(
+        jfr, List.of(slice), sampler != null ? procFile : null, Path.of(base + ".html"), pad, "auto",
+        null, p);
   }
 
   // ---------- report ----------
 
   static void report(List<String> args) throws Exception {
-    Path jfr = null, out = null;
+    Path jfr = null, out = null, proc = null;
     List<Path> logs = new ArrayList<>();
     long pad = 50;
     String event = "auto";
@@ -213,6 +254,7 @@ public final class BlockProf {
       switch (a) {
         case "--jfr" -> jfr = Path.of(value(args, ++i, a));
         case "--log" -> logs.add(Path.of(value(args, ++i, a)));
+        case "--proc" -> proc = Path.of(value(args, ++i, a));
         case "--out" -> out = Path.of(value(args, ++i, a));
         case "--pad" -> pad = Long.parseLong(value(args, ++i, a));
         case "--event" -> event = value(args, ++i, a);
@@ -237,17 +279,19 @@ public final class BlockProf {
         p.load(r);
       }
     }
-    writeReport(jfr, logs, out != null ? out : Path.of(base + ".html"), pad, event, interval, p);
+    if (proc == null && Files.isReadable(Path.of(base + ".proc.csv"))) proc = Path.of(base + ".proc.csv");
+    writeReport(jfr, logs, proc, out != null ? out : Path.of(base + ".html"), pad, event, interval, p);
   }
 
   static void writeReport(
-      Path jfr, List<Path> logs, Path out, long pad, String event, Double interval, Properties p)
+      Path jfr, List<Path> logs, Path proc, Path out, long pad, String event, Double interval,
+      Properties p)
       throws IOException {
     Converter.Result r =
         Converter.convert(
             new Converter.Options(
-                jfr, logs, pad, event, interval, p.getProperty("asprofArgs"), p.getProperty("pid"),
-                p.getProperty("host")));
+                jfr, logs, proc, pad, event, interval, p.getProperty("asprofArgs"),
+                p.getProperty("pid"), p.getProperty("host")));
     Files.writeString(out, Converter.html(r.json()), StandardCharsets.UTF_8);
     System.err.printf(
         "blockprof: %d blocks (of %d in the log), %d samples, %s every %s ms%n  report %s%n",

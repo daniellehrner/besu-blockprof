@@ -43,6 +43,7 @@ final class Converter {
   record Options(
       Path jfr,
       List<Path> logs,
+      Path proc,
       long padMs,
       String event,
       Double intervalMs,
@@ -281,10 +282,20 @@ final class Converter {
       }
     }
 
+    // per block -> tid -> rows [t(0.1 ms), d rchar, d syscr, d read_bytes, d run us, d wait us]
+    List<Map<String, List<long[]>>> procPerBlock = new ArrayList<>();
+    for (int i = 0; i < inside.size(); i++) procPerBlock.add(new TreeMap<>());
+    Map<String, String> procComms = new TreeMap<>();
+    double procGapMs = o.proc() != null ? readProc(o.proc(), win, procPerBlock, procComms) : 0;
+    boolean hasProc = !procComms.isEmpty();
+
     StringBuilder out = new StringBuilder(1 << 20);
     out.append("{\"pad\":").append(pad);
     out.append(",\"meta\":")
-        .append(meta(o, event, intervalMs, classPath, cFirst, cLast, hasNative, inside.size()));
+        .append(
+            meta(
+                o, event, intervalMs, classPath, cFirst, cLast, hasNative, inside.size(), procComms,
+                procGapMs));
     out.append(",\"states\":").append(jsonStrings(stateIds.keySet()));
     out.append(",\"phases\":").append(jsonStrings(phaseNames));
     out.append(",\"ioKinds\":").append(jsonStrings(Arrays.asList(IO_KINDS)));
@@ -303,10 +314,11 @@ final class Converter {
               Locale.ROOT,
               "{\"num\":%d,\"hash\":%s,\"tx\":%d,\"parallelPct\":%.1f,\"gas\":%d,\"gasPct\":%.1f,"
                   + "\"execMs\":%.1f,\"mgas\":%.2f,\"t0\":%d,\"logT\":%d,\"fcuT\":%d,\"raw\":%s,"
-                  + "\"threads\":[",
+                  + "\"proc\":%s,\"threads\":[",
               b.num(), jsonString(b.hash()), b.tx(), b.parallelPct(), b.gas(), b.gasPct(),
               b.execMs(), b.mgas(), win[i][0], b.logT() - win[i][0],
-              b.fcuT() > 0 ? b.fcuT() - win[i][0] : -1, jsonString(b.raw())));
+              b.fcuT() > 0 ? b.fcuT() - win[i][0] : -1, jsonString(b.raw()),
+              hasProc ? procJson(procPerBlock.get(i)) : "null"));
       boolean firstThread = true;
       for (var en : perBlock.get(i).entrySet()) {
         if (!firstThread) out.append(',');
@@ -325,6 +337,61 @@ final class Converter {
     out.append("]}");
     return new Result(
         out.toString(), inside.size(), logBlocks.size(), sampleCount, event, intervalMs);
+  }
+
+  /**
+   * Cuts the per-thread counter rows into the block windows, each window starting with the last row
+   * before it as the baseline. Returns the typical gap between rows of a busy thread in ms.
+   */
+  static double readProc(
+      Path proc, long[][] win, List<Map<String, List<long[]>>> perBlock, Map<String, String> comms)
+      throws IOException {
+    Map<String, long[]> lastRow = new HashMap<>();
+    Map<Long, Integer> gaps = new HashMap<>(); // in 0.1 ms
+    for (String line : Files.readAllLines(proc, StandardCharsets.UTF_8)) {
+      if (line.isEmpty() || line.startsWith("#")) continue;
+      String[] f = line.split(",");
+      if (f.length < 8) continue;
+      long[] cur = {
+        Long.parseLong(f[0]), Long.parseLong(f[3]), Long.parseLong(f[4]), Long.parseLong(f[5]),
+        Long.parseLong(f[6]), Long.parseLong(f[7])
+      };
+      String tid = f[1];
+      long[] prev = lastRow.put(tid, cur);
+      if (prev != null && cur[0] - prev[0] < 50_000_000L) {
+        gaps.merge(Math.round((cur[0] - prev[0]) / 100_000.0), 1, Integer::sum);
+      }
+      int bi = findWindow(win, cur[0] / 1_000_000);
+      if (bi < 0) continue;
+      comms.put(tid, f[2]);
+      List<long[]> rows = perBlock.get(bi).computeIfAbsent(tid, k -> new ArrayList<>());
+      long origin = win[bi][0] * 1_000_000L;
+      if (rows.isEmpty() && prev != null) {
+        rows.add(new long[] {Math.round((prev[0] - origin) / 100_000.0), 0, 0, 0, 0, 0});
+      }
+      long[] base = rows.size() > 0 && prev != null ? prev : cur;
+      rows.add(
+          new long[] {
+            Math.round((cur[0] - origin) / 100_000.0), cur[1] - base[1], cur[2] - base[2],
+            cur[3] - base[3], (cur[4] - base[4]) / 1000, (cur[5] - base[5]) / 1000
+          });
+    }
+    return gaps.isEmpty() ? 0 : inferInterval(gaps);
+  }
+
+  static String procJson(Map<String, List<long[]>> byTid) {
+    StringBuilder sb = new StringBuilder("{");
+    for (var e : byTid.entrySet()) {
+      if (sb.length() > 1) sb.append(',');
+      sb.append(jsonString(e.getKey())).append(":[");
+      List<long[]> rows = e.getValue();
+      for (int i = 0; i < rows.size(); i++) {
+        if (i > 0) sb.append(',');
+        appendArray(sb, rows.get(i));
+      }
+      sb.append(']');
+    }
+    return sb.append('}').toString();
   }
 
   /** Fills the page template, which marks the data spot with a JS comment. */
@@ -372,7 +439,7 @@ final class Converter {
 
   static String meta(
       Options o, String event, double intervalMs, String classPath, long first, long last,
-      boolean hasNative, int blocks) {
+      boolean hasNative, int blocks, Map<String, String> procComms, double procGapMs) {
     boolean wall = event.equals(WALL);
     String build = besuVersion(classPath);
     DateTimeFormatter ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -423,6 +490,18 @@ final class Converter {
                       + " interrupted, so it shows as running."
                   : ""));
     }
+    if (!procComms.isEmpty()) {
+      notes.add(
+          "<b>Disk or page cache.</b> While async-profiler ran, blockprof read the kernel's"
+              + " per-thread counters of " + escapeHtml(String.join(", ", new java.util.TreeSet<>(procComms.values())))
+              + " about every " + fmtMs(procGapMs) + " ms: <code>read_bytes</code> (bytes the thread"
+              + " made the kernel read from the block device, so page-cache misses including"
+              + " readahead), read syscalls, time on a CPU and time waiting for one. Wall time minus"
+              + " both is time the thread was blocked. A sample in RocksDB's file read counts as"
+              + " <b>disk</b> when the thread caused block-device reads or was blocked for at least"
+              + " half of the sample's " + iv + " ms, otherwise as <b>page cache</b>. The two rows"
+              + " under the engine lane show blocked time and disk reads as they happened.");
+    }
     notes.add(
         "<b>Engine-thread txs.</b> “Tx executed on engine thread” covers two cases the profile"
             + " cannot tell apart: the worker's result conflicted, or the worker had not finished"
@@ -470,6 +549,7 @@ final class Converter {
         + ",\"capture\":" + jsonString(capture)
         + ",\"profiler\":" + jsonString(profiler)
         + ",\"hasNative\":" + hasNative
+        + ",\"hasProc\":" + !procComms.isEmpty()
         + ",\"notes\":" + jsonStrings(notes) + "}";
   }
 
