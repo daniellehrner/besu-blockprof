@@ -1,4 +1,4 @@
-# blockprof
+# besu-blockprof
 
 Profiles a running Besu with async-profiler and writes a self-contained HTML report with one timeline per imported block:
 - every thread's samples around each `engine_newPayload` and the `engine_forkchoiceUpdated` that follows it
@@ -13,7 +13,7 @@ The block windows come from Besu's own log lines: `Imported #… | … ms exec` 
 Needs a JDK 21+ for building only:
 
 ```
-./build.sh          # writes blockprof.jar
+./build.sh          # writes besu-blockprof.jar
 ```
 
 Running needs only a Java 21+ runtime with `jdk.jfr`; the JRE Besu runs on is enough.
@@ -27,7 +27,7 @@ Besu has to write its INFO log to a file, because the block windows come from it
 asprof has to run as the user of the Besu JVM, and that JVM writes the JFR, so `--out` must be writable by it:
 
 ```
-sudo -u <besu user> blockprof record --log <besu log> --out /tmp/blockprof -- -d 300 -i 5ms -e wall --cstack vm
+sudo -u <besu user> besu-blockprof record --log <besu log> --out /tmp/besu-blockprof -- -d 300 -i 5ms -e wall --cstack vm
 ```
 
 The jar and the log file must be readable by that user too, so keep the tool out of home directories it cannot enter.
@@ -36,11 +36,11 @@ It writes five files next to each other:
 
 | File | Contents |
 |---|---|
-| `blockprof-<UTC time>.jfr` | the async-profiler capture |
-| `blockprof-<UTC time>.log` | only the `Imported #` / `FCU(` lines for the capture, ±60 s |
-| `blockprof-<UTC time>.proc.csv` | per-thread I/O and scheduler counters |
-| `blockprof-<UTC time>.properties` | asprof args, pid, host, start and end |
-| `blockprof-<UTC time>.html` | the report |
+| `besu-blockprof-<UTC time>.jfr` | the async-profiler capture |
+| `besu-blockprof-<UTC time>.log` | only the `Imported #` / `FCU(` lines for the capture, ±60 s |
+| `besu-blockprof-<UTC time>.proc.csv` | per-thread I/O and scheduler counters |
+| `besu-blockprof-<UTC time>.properties` | asprof args, pid, host, start and end |
+| `besu-blockprof-<UTC time>.html` | the report |
 
 While asprof runs, `record` also reads the kernel's per-thread I/O and scheduler counters (`/proc/<pid>/task/<tid>/io` and `schedstat`) of the engine API thread every millisecond into `<name>.proc.csv`. `read_bytes` only grows when the thread makes the kernel read from the block device, so the report can tell RocksDB file reads served from disk from those served by the page cache, and how long the thread was blocked.
 
@@ -61,8 +61,8 @@ async-profiler arguments that matter for the report:
 Rebuilds the HTML from a JFR, for example after copying the files to a laptop:
 
 ```
-blockprof report --jfr blockprof-20261024-043832.jfr
-blockprof report --jfr x.jfr --log besu.log --log besu.log.1 --out x.html
+besu-blockprof report --jfr besu-blockprof-20261024-043832.jfr
+besu-blockprof report --jfr x.jfr --log besu.log --log besu.log.1 --out x.html
 ```
 
 Next to a JFR from `record`, the `.log`, `.proc.csv` and `.properties` files are picked up automatically. Otherwise `--log` is required.

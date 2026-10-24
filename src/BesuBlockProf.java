@@ -32,15 +32,15 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /** Records an async-profiler capture of a running Besu and turns it into a per-block HTML report. */
-public final class BlockProf {
+public final class BesuBlockProf {
 
   static final String USAGE =
       """
       usage:
-        blockprof record --log FILE... [--pid N] [--out DIR] [--pad MS] [--asprof PATH]
-                         [--proc-threads PREFIX,...|none] [--proc-interval-us N] -- <asprof args>
-        blockprof report --jfr FILE [--log FILE]... [--proc FILE] [--out FILE] [--pad MS]
-                         [--event auto|wall|cpu] [--interval MS]
+        besu-blockprof record --log FILE... [--pid N] [--out DIR] [--pad MS] [--asprof PATH]
+                              [--proc-threads PREFIX,...|none] [--proc-interval-us N] -- <asprof args>
+        besu-blockprof report --jfr FILE [--log FILE]... [--proc FILE] [--out FILE] [--pad MS]
+                              [--event auto|wall|cpu] [--interval MS]
 
       record  runs asprof with the given arguments against Besu, writing JFR, then writes the report.
               --log is the file Besu writes its INFO log to (repeat it for rotated files). The pid
@@ -50,7 +50,7 @@ public final class BlockProf {
               start with --proc-threads (default engine-ordered-, the engine API thread) are read every
               --proc-interval-us (default 1000), so the report can tell disk reads from page-cache hits.
               example:
-                sudo -u <besu user> blockprof record --log <besu log> --out /tmp/blockprof -- -d 300 -i 5ms -e wall --cstack vm
+                sudo -u <besu user> besu-blockprof record --log <besu log> --out /tmp/besu-blockprof -- -d 300 -i 5ms -e wall --cstack vm
 
       report  builds the HTML from a JFR and the besu log lines that cover it. Next to a JFR from
               record, the .log and .properties files it wrote are picked up automatically.
@@ -77,11 +77,11 @@ public final class BlockProf {
         default -> throw new UsageException("unknown command " + args[0]);
       }
     } catch (UsageException e) {
-      System.err.println("blockprof: " + e.getMessage());
+      System.err.println("besu-blockprof: " + e.getMessage());
       System.err.print(USAGE);
       System.exit(2);
     } catch (Exception e) {
-      System.err.println("blockprof: " + e.getMessage());
+      System.err.println("besu-blockprof: " + e.getMessage());
       System.exit(1);
     }
   }
@@ -142,7 +142,7 @@ public final class BlockProf {
       ap.remove(ap.size() - 1);
     }
     if (!ap.contains("-d")) {
-      System.err.println("blockprof: no -d given, asprof collects for its default 60 s");
+      System.err.println("besu-blockprof: no -d given, asprof collects for its default 60 s");
     }
 
     if (logs.isEmpty()) throw new UsageException("--log is required: the file Besu writes its INFO log to");
@@ -162,7 +162,7 @@ public final class BlockProf {
     } else {
       Files.createDirectories(outDir);
       String stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC).format(Instant.now());
-      jfr = outDir.resolve("blockprof-" + stamp + ".jfr").toAbsolutePath();
+      jfr = outDir.resolve("besu-blockprof-" + stamp + ".jfr").toAbsolutePath();
       ap.add("-f");
       ap.add(jfr.toString());
     }
@@ -182,19 +182,19 @@ public final class BlockProf {
       try {
         List<String[]> tids = sampler.probe();
         System.err.println(
-            "blockprof: reading I/O counters of "
+            "besu-blockprof: reading I/O counters of "
                 + tids.stream().map(t -> t[1] + " (" + t[0] + ")").toList()
                 + " every " + procIntervalUs + " us");
-        samplerThread = new Thread(sampler, "blockprof-proc");
+        samplerThread = new Thread(sampler, "besu-blockprof-proc");
         samplerThread.setDaemon(true);
         samplerThread.start();
       } catch (IOException e) {
-        System.err.println("blockprof: warning: no disk/page-cache split: " + e.getMessage());
+        System.err.println("besu-blockprof: warning: no disk/page-cache split: " + e.getMessage());
         sampler = null;
       }
     }
 
-    System.err.println("blockprof: " + String.join(" ", cmd));
+    System.err.println("besu-blockprof: " + String.join(" ", cmd));
     Instant start = Instant.now();
     int rc = new ProcessBuilder(cmd).inheritIO().start().waitFor();
     Instant end = Instant.now();
@@ -202,12 +202,12 @@ public final class BlockProf {
       sampler.stop();
       samplerThread.join();
       if (sampler.error() != null) {
-        System.err.println("blockprof: warning: I/O counter sampling stopped: " + sampler.error());
+        System.err.println("besu-blockprof: warning: I/O counter sampling stopped: " + sampler.error());
       }
     }
     boolean alive = Files.exists(Path.of("/proc", pid));
     if (!alive) {
-      System.err.println("blockprof: warning: pid " + pid + " is gone, the JVM died during the capture");
+      System.err.println("besu-blockprof: warning: pid " + pid + " is gone, the JVM died during the capture");
     }
     if (rc != 0) throw new IllegalStateException("asprof exited with " + rc);
     if (!Files.exists(jfr) || Files.size(jfr) == 0) throw new IllegalStateException("asprof wrote no JFR at " + jfr);
@@ -245,7 +245,7 @@ public final class BlockProf {
     p.setProperty("start", start.toString());
     p.setProperty("end", end.toString());
     try (Writer w = Files.newBufferedWriter(Path.of(base + ".properties"), StandardCharsets.UTF_8)) {
-      p.store(w, "blockprof record");
+      p.store(w, "besu-blockprof record");
     }
 
     writeReport(
@@ -306,7 +306,7 @@ public final class BlockProf {
                 p.getProperty("pid"), p.getProperty("host")));
     Files.writeString(out, Converter.html(r.json()), StandardCharsets.UTF_8);
     System.err.printf(
-        "blockprof: %d blocks (of %d in the log), %d samples, %s every %s ms%n  report %s%n",
+        "besu-blockprof: %d blocks (of %d in the log), %d samples, %s every %s ms%n  report %s%n",
         r.blocks(), r.logBlocks(), r.samples(),
         r.event().equals(Converter.WALL) ? "wall clock" : "CPU", Converter.fmtMs(r.intervalMs()),
         out.toAbsolutePath());
@@ -402,5 +402,5 @@ public final class BlockProf {
     }
   }
 
-  private BlockProf() {}
+  private BesuBlockProf() {}
 }

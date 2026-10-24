@@ -507,7 +507,7 @@ final class Converter {
     }
     if (!procComms.isEmpty()) {
       notes.add(
-          "<b>Disk or page cache.</b> While async-profiler ran, blockprof read the kernel's"
+          "<b>Disk or page cache.</b> While async-profiler ran, besu-blockprof read the kernel's"
               + " per-thread counters of " + escapeHtml(String.join(", ", new java.util.TreeSet<>(procComms.values())))
               + " about every " + fmtMs(procGapMs) + " ms: <code>read_bytes</code> (bytes the thread"
               + " made the kernel read from the block device, so page-cache misses including"
