@@ -37,19 +37,20 @@ public final class BlockProf {
   static final String USAGE =
       """
       usage:
-        blockprof record [--pid N] [--log FILE]... [--out DIR] [--pad MS] [--asprof PATH]
+        blockprof record --log FILE... [--pid N] [--out DIR] [--pad MS] [--asprof PATH]
                          [--proc-threads PREFIX,...|none] [--proc-interval-us N] -- <asprof args>
         blockprof report --jfr FILE [--log FILE]... [--proc FILE] [--out FILE] [--pad MS]
                          [--event auto|wall|cpu] [--interval MS]
 
       record  runs asprof with the given arguments against Besu, writing JFR, then writes the report.
-              The pid defaults to the one process running org.hyperledger.besu.Besu, the log to
-              /var/log/besu/besu.log. asprof must run as the user of the Besu JVM, and that user
-              writes the files, so pick an --out it can write to.
+              --log is the file Besu writes its INFO log to (repeat it for rotated files). The pid
+              defaults to the one process running org.hyperledger.besu.Besu. asprof must run as the
+              user of the Besu JVM, and that user writes the files, so pick an --out it can write to.
               While asprof runs, the per-thread I/O and scheduler counters of the threads whose names
               start with --proc-threads (default engine-ordered-, the engine API thread) are read every
               --proc-interval-us (default 1000), so the report can tell disk reads from page-cache hits.
-              example: sudo -u execution blockprof record --out /tmp/blockprof -- -d 300 -i 5ms -e wall --cstack vm
+              example:
+                sudo -u <besu user> blockprof record --log <besu log> --out /tmp/blockprof -- -d 300 -i 5ms -e wall --cstack vm
 
       report  builds the HTML from a JFR and the besu log lines that cover it. Next to a JFR from
               record, the .log and .properties files it wrote are picked up automatically.
@@ -144,11 +145,7 @@ public final class BlockProf {
       System.err.println("blockprof: no -d given, asprof collects for its default 60 s");
     }
 
-    if (logs.isEmpty()) {
-      Path dflt = Path.of("/var/log/besu/besu.log");
-      if (!Files.isReadable(dflt)) throw new UsageException("no --log given and " + dflt + " is not readable");
-      logs.add(dflt);
-    }
+    if (logs.isEmpty()) throw new UsageException("--log is required: the file Besu writes its INFO log to");
     for (Path l : logs) if (!Files.isReadable(l)) throw new IllegalStateException("cannot read log " + l);
     if (pid == null) pid = findBesuPid();
     String asprofPath = findAsprof(asprof);
