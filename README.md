@@ -25,8 +25,10 @@ Running needs only a Java 21+ runtime with `jdk.jfr`; the JRE Besu runs on is en
 asprof has to run as the user of the Besu JVM, and that JVM writes the JFR, so `--out` must be writable by it:
 
 ```
-sudo -u execution ~/blockprof/blockprof record --out /tmp/blockprof -- -d 300 -i 5ms -e wall --cstack vm
+sudo -u execution /tmp/blockprof-bin/blockprof record --out /tmp/blockprof -- -d 300 -i 5ms -e wall --cstack vm
 ```
+
+The jar must be readable by that user too. On ssh besu `/home/daniel` is `750`, so the tool lives in `/tmp/blockprof-bin`.
 
 It writes five files next to each other:
 
