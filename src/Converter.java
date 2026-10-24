@@ -518,12 +518,12 @@ final class Converter {
             + " one request at a time (newPayload or FCU) for the threads and time range you pick:"
             + " by default the engine thread, parked samples left out. Threads other than the"
             + " engine thread are assigned to a request by time, split halfway between the end of"
-            + " newPayload and the start of FCU. A run of calls that only pass through (one callee"
-            + " holding all the time) shares one bar labelled “first › n frames › last”, so a"
-            + " storage read from the EVM down to RocksDB is one bar, and N nested calls of the same"
-            + " method show as one frame marked “×N”. Tick “Show every frame” to draw every call"
-            + " level, such as each nested <code>UpdateTrackingAccount.getStorageValue</code>, the way"
-            + " async-profiler does. Unsymbolised library frames"
+            + " newPayload and the start of FCU. The flame graph draws every call level, such as each"
+            + " nested <code>UpdateTrackingAccount.getStorageValue</code>, the way async-profiler"
+            + " does. Tick “Fold nested and pass-through calls” for a shallower graph: N nested calls"
+            + " of the same method then show as one frame marked “×N”, and a run of calls that only"
+            + " pass through (one callee holding all the time) shares one bar labelled"
+            + " “first › n frames › last”. Unsymbolised library frames"
             + " count on the function that called into them. Tick “Count native time on the"
             + " calling Java method” to cut every sample back to its deepest Java frame.");
     notes.add(

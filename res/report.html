@@ -272,10 +272,10 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
             <button class="nav" id="m-clear" type="button" hidden>Clear time range</button>
             <label><input type="checkbox" id="m-idle"> Include parked and idle samples</label>
             <label><input type="checkbox" id="m-java"> Count native time on the calling Java method</label>
-            <label><input type="checkbox" id="m-all"> Show every frame</label>
+            <label><input type="checkbox" id="m-fold"> Fold nested and pass-through calls</label>
           </div>
           <p class="sub" id="m-total"></p>
-          <p class="sub">Drag across the timeline to pick a time range. Click a thread or pool name on the left of the timeline to look at just that thread or pool. In the flame graph, a bar labelled “first › n frames › last” is a run of calls that only pass through, merged so the graph stays shallow, and “×8” marks 8 nested calls of the same method; hover a bar for the full list. Tick “Show every frame” to draw every call level like async-profiler does. Click a bar to zoom in and the top bar to zoom out; click a method in the table to highlight it.</p>
+          <p class="sub">Drag across the timeline to pick a time range. Click a thread or pool name on the left of the timeline to look at just that thread or pool. The flame graph draws every call level, like async-profiler does. Tick “Fold nested and pass-through calls” for a shallower graph: a bar labelled “first › n frames › last” is then a run of calls that only pass through, and “×8” marks 8 nested calls of the same method; hover a bar for the full list. Click a bar to zoom in and the top bar to zoom out; click a method in the table to highlight it.</p>
         </div>
         <div class="flame-scroll" id="flame-scroll"><canvas id="flame" aria-label="Flame graph of the selection"></canvas></div>
         <div class="mgrid">
@@ -1023,7 +1023,7 @@ document.getElementById('m-scope').addEventListener('change', e => { scope = e.t
 document.getElementById('m-clear').addEventListener('click', () => { range = null; drawOverlay(); methodsChanged(true); });
 document.getElementById('m-idle').addEventListener('change', () => methodsChanged(true));
 document.getElementById('m-java').addEventListener('change', () => methodsChanged(true));
-document.getElementById('m-all').addEventListener('change', () => methodsChanged(true));
+document.getElementById('m-fold').addEventListener('change', () => methodsChanged(true));
 
 function selectedSamples(b) {
   const idle = document.getElementById('m-idle').checked;
@@ -1079,7 +1079,7 @@ function fitText(text, w) {
   while (lo < hi) { const m = (lo + hi + 1) >> 1; if (fctx.measureText(text.slice(0, m) + '…').width <= w) lo = m; else hi = m - 1; }
   return lo > 1 ? text.slice(0, lo) + '…' : '';
 }
-const everyFrame = () => document.getElementById('m-all').checked;
+const everyFrame = () => !document.getElementById('m-fold').checked;
 const frameIdByName = new Map(D.frames.map((f, i) => [f, i]));
 // the converter folds N nested calls of X into one frame "X ×N"; this gives every level back
 function unfold(ids) {
