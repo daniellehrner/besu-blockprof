@@ -134,7 +134,7 @@ header { display: grid; gap: 10px; }
 .sw.io { background: var(--io-read); height: 4px; }
 .sw.iow { background: var(--io-write); height: 4px; }
 .sw.iocpu { background: var(--muted); height: 4px; }
-.sw.blocked { background: var(--muted); opacity: 0.6; height: 6px; }
+.sw.blocked { background: var(--muted); opacity: 0.45; height: 6px; }
 .sw.disk { background: var(--ink); height: 6px; }
 .sw.sel { background: var(--sel); outline: 1px solid var(--ink); }
 .tl-inner { position: relative; }
@@ -762,18 +762,16 @@ function draw() {
       if (ps) {
         ctx.fillText('off CPU', 8, l.y + 39);
         ctx.fillText('disk reads', 8, l.y + 48);
-        const spans = Object.values(requestSpans(b)).filter(Boolean);
-        for (let i = 1; i < ps.T.length; i++) {
-          const a = ps.T[i - 1], z = ps.T[i];
-          if (!spans.some(sp => z > sp[0] - IV && a < sp[1] + IV)) continue;
-          const x0 = ax.x(a), x1 = ax.x(z); if (x0 == null || x1 == null) continue;
-          const w = Math.max(1, x1 - x0);
-          const run = ps.C[i][3] - ps.C[i - 1][3], wait = ps.C[i][4] - ps.C[i - 1][4];
-          const off = Math.max(0, 1 - (run + wait) / (z - a));
-          if (off > 0.05) { ctx.globalAlpha = 0.25 + 0.6 * off; ctx.fillStyle = COL.muted; ctx.fillRect(x0, l.y + 32, w, 7); }
-          const disk = ps.C[i][2] - ps.C[i - 1][2];
-          if (disk > 0) { ctx.globalAlpha = 0.45 + 0.55 * Math.min(1, disk / 262144); ctx.fillStyle = COL.ink; ctx.fillRect(x0, l.y + 41, w, 7); }
-          ctx.globalAlpha = 1;
+        // one bar per sample interval: blocked share of it, and bytes read from the device (log scale)
+        for (const sp of Object.values(requestSpans(b)).filter(Boolean)) {
+          for (let a = Math.floor((sp[0] - IV) / IV) * IV; a < sp[1] + IV; a += IV) {
+            const p = procOver(ps, a, a + IV); if (!p) continue;
+            const x0 = ax.x(a), x1 = ax.x(a + IV); if (x0 == null || x1 == null) continue;
+            const w = Math.max(1, x1 - x0 - 0.5);
+            const off = p.blocked / IV;
+            if (off > 0.05) { const hh = Math.max(1, 7 * Math.min(1, off)); ctx.fillStyle = COL.muted; ctx.fillRect(x0, l.y + 39 - hh, w, hh); }
+            if (p.disk > 0) { const hh = Math.max(2, 7 * Math.min(1, Math.log2(1 + p.disk / 4096) / 6)); ctx.fillStyle = COL.ink; ctx.fillRect(x0, l.y + 48 - hh, w, hh); }
+          }
         }
       }
     }
