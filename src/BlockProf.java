@@ -302,18 +302,36 @@ public final class BlockProf {
     List<Path> roots = new ArrayList<>(List.of(Path.of("/opt")));
     String home = System.getProperty("user.home");
     if (home != null) roots.add(Path.of(home, "opt"));
-    String best = null;
+    // highest version in the directory name wins; a directory without one may be any old version
+    Path best = null;
     for (Path root : roots) {
       if (!Files.isDirectory(root)) continue;
       try (DirectoryStream<Path> ds = Files.newDirectoryStream(root, "async-profiler*")) {
         for (Path d : ds) {
-          Path p = d.resolve("bin/asprof");
-          if (Files.isExecutable(p) && (best == null || p.toString().compareTo(best) > 0)) best = p.toString();
+          if (Files.isExecutable(d.resolve("bin/asprof"))
+              && (best == null || compareVersions(versionOf(d), versionOf(best)) > 0)) {
+            best = d;
+          }
         }
       }
     }
     if (best == null) throw new IllegalStateException("asprof not found on PATH or in /opt; pass --asprof PATH");
-    return best;
+    return best.resolve("bin/asprof").toString();
+  }
+
+  static int[] versionOf(Path dir) {
+    java.util.regex.Matcher m =
+        java.util.regex.Pattern.compile("async-profiler-(\\d+(?:\\.\\d+)*)").matcher(dir.getFileName().toString());
+    if (!m.find()) return new int[0];
+    return java.util.Arrays.stream(m.group(1).split("\\.")).mapToInt(Integer::parseInt).toArray();
+  }
+
+  static int compareVersions(int[] a, int[] b) {
+    for (int i = 0; i < Math.max(a.length, b.length); i++) {
+      int x = i < a.length ? a[i] : -1, y = i < b.length ? b[i] : -1;
+      if (x != y) return Integer.compare(x, y);
+    }
+    return 0;
   }
 
   static String hostName() {
