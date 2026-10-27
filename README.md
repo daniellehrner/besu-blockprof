@@ -4,7 +4,7 @@ Profiles a running Besu with async-profiler and writes a self-contained HTML rep
 - every thread's samples around each `engine_newPayload` and the `engine_forkchoiceUpdated` that follows it
 - phases on the engine thread, the parallel-tx workers and the trie pools
 - time inside RocksDB, split into file reads, block cache, decompression and locks
-- a "Where the time went" flame graph and method table for any thread, pool and time range
+- a "Where the time went" flame graph and method table for any thread, pool and time range, per block or added up over all blocks
 
 The block windows come from Besu's own log lines: `Imported #… | … ms exec` and `FCU(VALID) | head: …`.
 
