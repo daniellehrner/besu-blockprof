@@ -1367,6 +1367,9 @@ function chainLabel(ch) {
   return `${f[0]} › ${f.length - 2} frame${f.length === 3 ? '' : 's'} › ${f[f.length - 1]}`;
 }
 function requestLabel() { return request === 'np' ? 'newPayload' : 'FCU'; }
+// a method's samples say how often it was on the stack, not how long one call took, so the flame
+// graph counts samples rather than turning them into ms
+const samplesOf = v => { const n = Math.round(v / IV); return `${fmt(n)} sample${n === 1 ? '' : 's'}`; };
 const rootLabel = () => `${scopeLabel(scope)} · ${requestLabel()}${allBlocks ? ` · all ${fmt(D.blocks.length)} blocks` : ''}`;
 function drawFlame() {
   const wrap = document.getElementById('flame-scroll');
@@ -1406,7 +1409,7 @@ function drawFlame() {
     fctx.fillRect(x + 0.5, y + 0.5, Math.max(0.5, w - 1), ROW - 1);
     fctx.globalAlpha = 1;
     if (w > 28) {
-      const label = first.id === -1 ? `${rootLabel()} · ${fmt(first.v)} ms` : `${chainLabel(ch)} · ${fmt(first.v)} ms`;
+      const label = `${first.id === -1 ? rootLabel() : chainLabel(ch)} · ${samplesOf(first.v)}`;
       fctx.font = hit ? bold : font;
       const t = fitText(fctx, label, w - 8);
       if (t) { fctx.fillStyle = hit || colorBy === 'ft' || java ? COL.ink : COL['ink-2']; fctx.fillText(t, x + 4, y + ROW / 2 + 0.5); }
@@ -1417,7 +1420,7 @@ function drawFlame() {
   if (top) {
     fctx.fillStyle = COL.bg; fctx.fillRect(0.5, 0.5, W - 1, ROW - 1);
     fctx.fillStyle = COL['ink-2'];
-    fctx.fillText(fitText(fctx, `◂ ${rootLabel()} · ${fmt(root.v)} ms · zoomed to ${fmt(100 * zoom.v / root.v, 1)}%, click here to zoom out`, W - 8), 4, ROW / 2 + 0.5);
+    fctx.fillText(fitText(fctx, `◂ ${rootLabel()} · ${samplesOf(root.v)} · zoomed to ${fmt(100 * zoom.v / root.v, 1)}%, click here to zoom out`, W - 8), 4, ROW / 2 + 0.5);
     fstate.rects.push({ x: 0, y: 0, w: W, ch: [root], back: true });
   }
   (function rec(n, x, d) {
@@ -1447,7 +1450,7 @@ flame.addEventListener('mousemove', ev => {
   const names = q.ch.map(x => x.id === -1 ? 'all samples in the selection' : nameOf(x.id));
   const list = names.length > 40 ? [...names.slice(0, 20), `… ${names.length - 40} more …`, ...names.slice(-20)] : names;
   tip.innerHTML = `<div class="t-head"><span class="chip"><i class="sw" style="background:var(--c-${dominant(n.fam)})"></i>${esc(FAM_LABEL[dominant(n.fam)])}</span>` +
-    `<span class="mono">${fmt(n.v, 0)} ms in ${fmt(n.v / IV)} sample${n.v === IV ? '' : 's'} · ${fmt(100 * n.v / tot, 1)}% of ${requestLabel()} selection</span>` +
+    `<span class="mono">${samplesOf(n.v)} · ${fmt(100 * n.v / tot, 1)}% of ${requestLabel()} selection</span>` +
     (q.ch.length > 1 ? `<span class="chip">${q.ch.length} frames, caller first</span>` : '') + `</div>` +
     `<div class="frames" style="color:var(--ink)">${list.map(esc).join('\n')}</div>`;
   tip.hidden = false;
@@ -1495,8 +1498,8 @@ function topTable(samples) {
   for (const [k, sv, tv] of showOnes ? many.concat(ones.slice(0, 200)) : many) {
     const sp = simple(k), pkg = k.endsWith(sp) ? k.slice(0, k.length - sp.length) : '';
     html += `<tr data-k="${esc(k).replace(/"/g, '&quot;')}" aria-selected="${searchEl.value === methodPattern(k)}" tabindex="0"><td class="m" title="${esc(k).replace(/"/g, '&quot;')}"><span class="pkg">${esc(pkg)}</span>${esc(sp)}</td>` +
-      `<td class="num n" title="${fmt(sv)} ms">${sv ? fmt(sv / IV) : '·'}</td><td class="num share" title="${fmt(sv)} ms">${sv ? share(sv) : ''}</td>` +
-      `<td class="num n" title="${fmt(tv)} ms">${fmt(tv / IV)}</td><td class="num share" title="${fmt(tv)} ms">${share(tv)}</td></tr>`;
+      `<td class="num n">${sv ? fmt(sv / IV) : '·'}</td><td class="num share">${sv ? share(sv) : ''}</td>` +
+      `<td class="num n">${fmt(tv / IV)}</td><td class="num share">${share(tv)}</td></tr>`;
   }
   if (ones.length && !showOnes) html += `<tr><td colspan="5"><button type="button" class="link" id="m-ones">Show ${fmt(ones.length)} method${ones.length === 1 ? '' : 's'} seen in 1 sample</button></td></tr>`;
   if (!rows.length) html += `<tr><td colspan="5">No samples in this selection.</td></tr>`;
