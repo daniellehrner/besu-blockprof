@@ -8,6 +8,17 @@ Profiles a running Besu with async-profiler and writes a self-contained HTML rep
 
 The block windows come from Besu's own log lines: `Imported #… | … ms exec` and `FCU(VALID) | head: …`.
 
+## Download
+
+Each [release](https://github.com/daniellehrner/besu-blockprof/releases) has the jar. It runs on any Java 21+ runtime with `jdk.jfr`; the JRE Besu runs on is enough.
+
+```
+wget https://github.com/daniellehrner/besu-blockprof/releases/latest/download/besu-blockprof.jar
+java -jar besu-blockprof.jar record --log <besu log> -- -d 120 -i 5ms -e wall --cstack vm
+```
+
+`java -jar besu-blockprof.jar` takes the same commands and options as the `besu-blockprof` script used below. Recording also needs [async-profiler](https://github.com/async-profiler/async-profiler/releases) on the machine running Besu.
+
 ## Build
 
 Needs a JDK 21+ for building only:
@@ -15,8 +26,6 @@ Needs a JDK 21+ for building only:
 ```
 ./build.sh          # writes besu-blockprof.jar
 ```
-
-Running needs only a Java 21+ runtime with `jdk.jfr`; the JRE Besu runs on is enough.
 
 ## Record
 
