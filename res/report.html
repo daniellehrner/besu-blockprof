@@ -181,6 +181,9 @@ header { display: grid; gap: 10px; }
 table { border-collapse: collapse; width: 100%; font-size: var(--s-sm); }
 th { text-align: left; font-family: var(--f-cond); font-weight: 500; font-size: var(--s-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
 th.num, td.num { text-align: right; }
+.th-sub { display: block; font-family: var(--f-sans); font-size: 10.5px; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); }
+button.link { font: inherit; color: var(--ink); background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+button.link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 td { padding: 4px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
 #blocks tbody tr { cursor: pointer; }
 #blocks tbody tr:hover td { background: var(--bg); }
@@ -278,7 +281,7 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
             <select id="m-scope"></select>
             <span class="chip" id="m-range">Whole window</span>
             <button class="nav" id="m-clear" type="button" hidden>Clear time range</button>
-            <label><input type="checkbox" id="m-idle"> Include parked and idle samples</label>
+            <label><input type="checkbox" id="m-idle"> Include parked and syscall samples inside a phase</label>
             <label><input type="checkbox" id="m-java"> Count native time on the calling Java method</label>
             <label><input type="checkbox" id="m-fold"> Fold nested and pass-through calls</label>
           </div>
@@ -410,23 +413,39 @@ for (const b of D.blocks) {
     else segs.push(segB);
   }
   b.segs = segs;
-  // engine thread accounting
+  // engine thread accounting: the same samples the flame graph counts with parked ones included,
+  // so a busy sample with a broken stack (cgo, signal handlers) still counts for its request
   b.eng = { np: {}, fcu: {}, act: {}, fam: {} };
   if (eng) for (const s of eng.s) {
-    const t = s[0] / 10, p = D.phases[s[2]];
-    if (!inSegs(segs, t)) continue;
-    const ms = IV * s[5];
-    const req = isEngineRequest(p) ? 'np' : p.startsWith('fcu.') ? 'fcu' : null;
-    if (!req) continue;
-    const row = (b.eng[req][p] ||= [0, 0, 0, 0, 0]);
-    row[0] += ms; row[actCol(s[3])] += ms;
-    const fk = req + ':' + PH_FAM[s[2]];
-    b.eng.fam[fk] = (b.eng.fam[fk] || 0) + ms;
+    if (!counts(s, true)) continue;
+    const p = D.phases[s[2]];
+    for (const req of ['np', 'fcu']) {
+      const ms = sampleMs(b, s, req, null);
+      if (!ms) continue;
+      const row = (b.eng[req][p] ||= [0, 0, 0, 0, 0]);
+      row[0] += ms; row[actCol(s[3])] += ms;
+      const fk = req + ':' + PH_FAM[s[2]];
+      b.eng.fam[fk] = (b.eng.fam[fk] || 0) + ms;
+    }
   }
   b.npMs = sum(Object.values(b.eng.np).map(r => r[0]));
   b.fcuMs = sum(Object.values(b.eng.fcu).map(r => r[0]));
 }
 function inSegs(segs, t) { for (const s of segs) if (t >= s[0] && t <= s[1]) return true; return false; }
+// a parked sample outside any phase is a thread waiting for work, not waiting inside a request
+function counts(s, withParked) { return busyAct(s[3]) || withParked && PH_FAM[s[2]] !== 'other'; }
+// ms of a sample inside the window, the request's half of it and the time range; one parked
+// sample can stand for a run of intervals that reaches far past the window
+function sampleMs(b, s, req, rng) {
+  const split = requestSplit(b);
+  let ms = 0;
+  for (let k = 0, t = s[0] / 10; k < s[5]; k++, t += IV) {
+    if (!inSegs(b.segs, t) || (req === 'np' ? t >= split : t < split)) continue;
+    if (rng && (t + IV <= rng[0] || t >= rng[1])) continue;
+    ms += IV;
+  }
+  return ms;
+}
 function sum(a) { return a.reduce((x, y) => x + y, 0); }
 const fmt = (v, d = 0) => v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 
@@ -517,7 +536,9 @@ let maxEng = Math.max(1, ...D.blocks.map(b => b.npMs + b.fcuMs));
 let selected = 0;
 (function blockTable() {
   const t = document.getElementById('blocks');
-  t.innerHTML = `<thead><tr><th>Block</th><th class="num">Txs</th><th class="num">Parallel</th><th class="num">Mgas</th><th class="num">Exec (log)</th><th class="num">newPayload</th><th class="num">FCU</th><th>Engine thread: newPayload | FCU</th></tr></thead><tbody></tbody>`;
+  t.innerHTML = `<thead><tr><th>Block</th><th class="num">Txs</th><th class="num">Parallel</th><th class="num">Mgas</th>` +
+    `<th class="num" title="Besu's own figure from the Imported line: rememberBlock start to the log line">Exec (log)<span class="th-sub">from Imported line</span></th>` +
+    `<th class="num">newPayload<span class="th-sub">engine thread</span></th><th class="num">FCU<span class="th-sub">engine thread</span></th><th>Engine thread: newPayload | FCU</th></tr></thead><tbody></tbody>`;
   const tb = t.tBodies[0];
   D.blocks.forEach((b, i) => {
     const tr = document.createElement('tr');
@@ -984,22 +1005,21 @@ function setScope(v) { scope = v; fillScopes(D.blocks[selected]); methodsChanged
 document.getElementById('m-scope').addEventListener('change', e => { scope = e.target.value; methodsChanged(true); });
 document.getElementById('m-clear').addEventListener('click', () => { range = null; drawOverlay(); methodsChanged(true); });
 document.getElementById('m-idle').addEventListener('change', () => methodsChanged(true));
+document.getElementById('m-total').addEventListener('click', e => {
+  if (e.target.id === 'm-incl') { document.getElementById('m-idle').checked = true; methodsChanged(true); }
+});
 document.getElementById('m-java').addEventListener('change', () => methodsChanged(true));
 document.getElementById('m-fold').addEventListener('change', () => methodsChanged(true));
 
-function selectedSamples(b) {
-  const idle = document.getElementById('m-idle').checked;
-  const split = requestSplit(b);
+// [sample, thread, ms] of the chosen request, threads and time range
+function selectedSamples(b, withParked = document.getElementById('m-idle').checked) {
   const out = [];
   for (const t of b.threads) {
     if (!inScope(t)) continue;
     for (const s of t.s) {
-      const tt = s[0] / 10;
-      if (!inSegs(b.segs, tt)) continue;
-      if (range && (tt + IV <= range[0] || tt >= range[1])) continue;
-      if (request === 'np' ? tt >= split : tt < split) continue;
-      if (!idle && !busyAct(s[3])) continue;
-      out.push([s, t]);
+      if (!counts(s, withParked)) continue;
+      const ms = sampleMs(b, s, request, range);
+      if (ms) out.push([s, t, ms]);
     }
   }
   return out;
@@ -1019,8 +1039,8 @@ function leafIndex(ids) {
 function buildTree(samples) {
   const root = { id: -1, v: 0, c: new Map(), fam: {}, parent: null };
   const byGroup = scope === 'all';
-  for (const [s, t] of samples) {
-    const ms = IV * s[5], f = PH_FAM[s[2]];
+  for (const [s, t, ms] of samples) {
+    const f = PH_FAM[s[2]];
     let n = root; n.v += ms; n.fam[f] = (n.fam[f] || 0) + ms;
     const stack = D.stacks[s[1]];
     let ids = stack.slice(0, leafIndex(stack) + 1);
@@ -1162,8 +1182,8 @@ flame.addEventListener('click', ev => {
 function topTable(samples) {
   const self = new Map(), total = new Map();
   let all = 0;
-  for (const [s] of samples) {
-    const ms = IV * s[5]; all += ms;
+  for (const [s, , ms] of samples) {
+    all += ms;
     const ids = D.stacks[s[1]];
     const seen = new Set();
     for (const id of ids) { const k = keyOf(D.frames[id]); if (!seen.has(k)) { seen.add(k); total.set(k, (total.get(k) || 0) + ms); } }
@@ -1197,9 +1217,9 @@ function topTable(samples) {
 }
 function rocksPanel(samples) {
   const m = new Map(); let tot = 0;
-  for (const [s, t] of samples) {
+  for (const [s, t, ms] of samples) {
     if (s[3] !== 1 && s[3] !== 2) continue;
-    const ms = IV * s[5]; tot += ms;
+    tot += ms;
     const src = s[6] === 1 ? preadSource(D.blocks[selected], t, s) : null;
     const k = (s[3] === 2 ? 'write' : 'read') + '|' + (s[6] || 0) + (src ? '|' + src : '');
     m.set(k, (m.get(k) || 0) + ms);
@@ -1230,10 +1250,15 @@ function methodsChanged(rebuild) {
   rc.textContent = range ? `${fmt(range[0] - b.execStart)} to ${fmt(range[1] - b.execStart)} ms` : 'Whole window';
   document.getElementById('m-clear').hidden = !range;
   const threads = new Set(samples.map(x => x[1].name)).size;
-  const count = samples.reduce((a, [s]) => a + s[5], 0);
-  document.getElementById('m-total').textContent =
-    `${requestLabel()}: ${fmt(fstate.root.v)} thread-ms in ${fmt(count)} sample${count === 1 ? '' : 's'} from ${threads} thread${threads === 1 ? '' : 's'}` +
-    (range ? ' in the selected time range.' : '. The button labels give the engine thread time of each request.');
+  const ms = sum(samples.map(x => x[2]));
+  const all = document.getElementById('m-idle').checked ? ms : sum(selectedSamples(b, true).map(x => x[2]));
+  const n = ms / IV, eng = scope === 'g:' + GROUPS[0][1];
+  const unit = eng ? 'ms' : 'thread-ms';
+  const where = (eng ? ' on the engine thread' : '') + (range ? ' in the selected time range' : '');
+  document.getElementById('m-total').innerHTML =
+    `${requestLabel()}: ${all > ms ? `${fmt(ms)} of ${fmt(all)}` : fmt(ms)} ${unit}${where}, ${fmt(n)} sample${n === 1 ? '' : 's'}` +
+    (eng ? '.' : ` from ${threads} thread${threads === 1 ? '' : 's'}.`) +
+    (all > ms ? ` ${fmt(all - ms)} ${unit} parked or in a syscall left out; <button type="button" class="link" id="m-incl">include them</button>.` : '');
   drawFlame(); topTable(samples); rocksPanel(samples);
 }
 
