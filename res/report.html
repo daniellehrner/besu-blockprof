@@ -213,6 +213,14 @@ button.icon { width: 32px; height: 32px; padding: 0; font-weight: 600; }
 .rocks .bar { height: 10px; background: var(--ink-2); border-radius: 0 2px 2px 0; min-width: 1px; }
 .rocks .bar.file { background: var(--ink); }
 .rocks .bar.write { background: var(--io-write); }
+.rocks .bar.other { background: var(--io-other); }
+.rocks .bar.cache { background: var(--ink-2); }
+.rocks .split { display: flex; height: 10px; min-width: 2px; }
+.rocks .split .bar { border-radius: 0; min-width: 0; }
+.rocks .split .bar:last-child { border-radius: 0 2px 2px 0; }
+.rocks .src { grid-column: 2 / -1; margin-top: -2px; font-size: var(--s-xs); color: var(--ink-2); }
+#proc-table { margin-bottom: 12px; }
+caption { caption-side: top; text-align: left; font-size: var(--s-xs); color: var(--muted); padding-bottom: 4px; }
 .rocks .n { font-family: var(--f-mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2); }
 
 .scroll { overflow-x: auto; }
@@ -326,7 +334,7 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
       <div class="grid2">
         <div>
           <h3 style="margin-bottom:6px">Engine thread, this block</h3>
-          <p class="sub" id="proc-line" hidden></p>
+          <div class="scroll"><table id="proc-table" hidden></table></div>
           <div class="scroll"><table id="phase-table"></table></div>
         </div>
         <div>
@@ -1456,15 +1464,23 @@ function rocksPanel(samples) {
   }
   const el = document.getElementById('m-rocks');
   if (!tot) { el.innerHTML = `<span class="sub" style="grid-column:1/-1">No samples inside RocksDB in this selection.</span>`; return; }
+  // file reads whose source is known share one row, split into disk and page cache
+  const disk = m.get('read|1|disk') || 0, cache = m.get('read|1|cache') || 0, known = disk + cache;
+  m.delete('read|1|disk'); m.delete('read|1|cache');
   const rows = [...m.entries()].sort((a, b2) => b2[1] - a[1]);
-  const max = rows[0][1];
+  const max = Math.max(known, ...rows.map(r => r[1]));
+  const pct = v => (100 * v / max).toFixed(1) + '%';
   let html = '';
+  if (known) {
+    html += `<span>File reads (pread)</span><span class="split" style="width:${pct(known)}"><i class="bar file" style="width:${(100 * disk / known).toFixed(1)}%"></i><i class="bar cache" style="width:${(100 * cache / known).toFixed(1)}%"></i></span>` +
+      `<span class="n">${fmt(known)} ms</span><span class="n">${fmt(100 * known / tot)}%</span>` +
+      `<span class="src">${fmt(disk)} ms from disk · ${fmt(cache)} ms from page cache</span>`;
+  }
   for (const [k, ms] of rows) {
-    const [rw, kind, src] = k.split('|');
-    const label = `${rw === 'write' ? 'Write' : 'Read'}: ${IOK[+kind] || 'unclassified'}` +
-      (src ? (src === 'disk' ? ', from disk' : ', from page cache') : '');
-    const cls = rw === 'write' ? 'write' : +kind === 1 && src !== 'cache' ? 'file' : '';
-    html += `<span>${esc(label)}</span><span><i class="bar ${cls}" style="display:block;width:${(100 * ms / max).toFixed(1)}%"></i></span><span class="n">${fmt(ms)} ms</span><span class="n">${fmt(100 * ms / tot)}%</span>`;
+    const [rw, kind] = k.split('|');
+    const label = rw === 'read' && +kind === 1 ? `File reads (pread)${known ? ', source not known' : ''}` : `${rw === 'write' ? 'Write' : 'Read'}: ${IOK[+kind] || 'unclassified'}`;
+    const cls = rw === 'write' ? 'write' : +kind === 1 || +kind === 11 ? 'file' : 'other';
+    html += `<span>${esc(label)}</span><span><i class="bar ${cls}" style="display:block;width:${pct(ms)}"></i></span><span class="n">${fmt(ms)} ms</span><span class="n">${fmt(100 * ms / tot)}%</span>`;
   }
   el.innerHTML = html;
 }
@@ -1530,16 +1546,16 @@ function poolTable(b) {
   document.getElementById('pool-table').innerHTML = html + '</tbody>';
 }
 
-function procLine(b) {
-  const el = document.getElementById('proc-line');
+function procTable(b) {
   const ps = procSeries(b, b.engine);
-  const parts = [];
+  let rows = '';
   for (const [k, title] of [['np', 'newPayload'], ['fcu', 'FCU']]) {
     const span = requestSpans(b)[k], p = span && procOver(ps, span[0], span[1]);
-    if (p) parts.push(`${title}: ${fmt(p.run)} ms on CPU, ${fmt(p.blocked)} ms blocked, ${fmt(p.syscr)} read syscalls, ${fmtBytes(p.disk)} from disk.`);
+    if (p) rows += `<tr><td>${title}</td><td class="num">${fmt(p.run)} ms</td><td class="num">${fmt(p.blocked)} ms</td><td class="num">${fmt(p.syscr)}</td><td class="num">${fmtBytes(p.disk)}</td></tr>`;
   }
-  el.hidden = !parts.length;
-  el.textContent = parts.join(' ');
+  const t = document.getElementById('proc-table');
+  t.hidden = !rows;
+  t.innerHTML = rows && `<caption>Engine thread, kernel counters</caption><thead><tr><th>Request</th><th class="num">On CPU</th><th class="num">Blocked</th><th class="num">Read syscalls</th><th class="num">From disk</th></tr></thead><tbody>${rows}</tbody>`;
 }
 function select(i) {
   selected = Math.max(0, Math.min(D.blocks.length - 1, i));
@@ -1553,7 +1569,7 @@ function select(i) {
   document.getElementById('d-axis-note').textContent = `Window ${segs}, ${PAD} ms padding, ${IV} ms per sample`;
   range = null; pinned = null;
   document.getElementById('pinned').hidden = true;
-  draw(); phaseTable(b); poolTable(b); procLine(b);
+  draw(); procTable(b); phaseTable(b); poolTable(b);
   fillScopes(b); methodsChanged(true);
 }
 // previous and next follow the table's sort order
