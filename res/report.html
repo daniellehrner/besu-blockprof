@@ -281,6 +281,23 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
           <canvas id="tl-ov" aria-hidden="true"></canvas>
         </div>
       </div>
+      <div class="grid2">
+        <div>
+          <h3 style="margin-bottom:6px">Engine thread, this block</h3>
+          <p class="sub" id="proc-line" hidden></p>
+          <div class="scroll"><table id="phase-table"></table></div>
+        </div>
+        <div style="display:grid; gap:14px; align-content:start">
+          <div>
+            <h3 style="margin-bottom:6px">Other threads, busy time</h3>
+            <div class="scroll"><table id="pool-table"></table></div>
+          </div>
+          <div id="pinned">
+            <h3 style="margin-bottom:6px">Pinned sample</h3>
+            <p class="sub">Click a sample in the timeline to keep its stack here.</p>
+          </div>
+        </div>
+      </div>
       <div class="methods" id="methods">
         <div class="methods-head">
           <h3>Where the time went</h3>
@@ -310,23 +327,6 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
             <h3 style="margin-bottom:6px">Methods</h3>
             <p class="sub" id="m-note" style="margin-bottom:6px"></p>
             <div class="scroll"><table id="m-top"></table></div>
-          </div>
-        </div>
-      </div>
-      <div class="grid2">
-        <div>
-          <h3 style="margin-bottom:6px">Engine thread, this block</h3>
-          <p class="sub" id="proc-line" hidden></p>
-          <div class="scroll"><table id="phase-table"></table></div>
-        </div>
-        <div style="display:grid; gap:14px; align-content:start">
-          <div>
-            <h3 style="margin-bottom:6px">Other threads, busy time</h3>
-            <div class="scroll"><table id="pool-table"></table></div>
-          </div>
-          <div id="pinned">
-            <h3 style="margin-bottom:6px">Pinned sample</h3>
-            <p class="sub">Click a sample in the timeline to keep its stack here.</p>
           </div>
         </div>
       </div>
