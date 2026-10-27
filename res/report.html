@@ -230,7 +230,10 @@ td.bar { width: 46%; min-width: 260px; }
 #tip .t-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; font-size: var(--s-sm); }
 #tip .frames, #pinned .frames { font-family: var(--f-mono); font-size: 10.5px; line-height: 1.5; color: var(--ink-2); white-space: pre; overflow: hidden; }
 #tip .frames .hit, #pinned .frames .hit { color: var(--ink); font-weight: 500; }
-#pinned .frames { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+#pinned { border: 1px solid var(--axis); border-radius: 6px; padding: 8px 12px 10px; display: grid; gap: 8px; }
+#pinned .pin-head { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: var(--s-sm); }
+#pinned .pin-head .nav { margin-left: auto; min-height: 32px; }
+#pinned .frames { overflow: auto; max-height: 320px; }
 .chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hair); font-size: var(--s-xs); color: var(--ink-2); }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: var(--s-sm); color: var(--ink-2); }
 .controls label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
@@ -294,21 +297,16 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
           <canvas id="tl-ov" aria-hidden="true"></canvas>
         </div>
       </div>
+      <div id="pinned" role="region" aria-label="Pinned sample" hidden></div>
       <div class="grid2">
         <div>
           <h3 style="margin-bottom:6px">Engine thread, this block</h3>
           <p class="sub" id="proc-line" hidden></p>
           <div class="scroll"><table id="phase-table"></table></div>
         </div>
-        <div style="display:grid; gap:14px; align-content:start">
-          <div>
-            <h3 style="margin-bottom:6px">Other threads, busy time</h3>
-            <div class="scroll"><table id="pool-table"></table></div>
-          </div>
-          <div id="pinned">
-            <h3 style="margin-bottom:6px">Pinned sample</h3>
-            <p class="sub">Click a sample in the timeline to keep its stack here.</p>
-          </div>
+        <div>
+          <h3 style="margin-bottom:6px">Other threads, busy time</h3>
+          <div class="scroll"><table id="pool-table"></table></div>
         </div>
       </div>
       <div class="methods" id="methods">
@@ -973,7 +971,7 @@ canvas.addEventListener('mousemove', ev => {
 canvas.addEventListener('mouseleave', () => { tip.hidden = true; });
 const ov = document.getElementById('tl-ov');
 const octx = ov.getContext('2d');
-let range = null, drag = null, suppressClick = false;
+let range = null, drag = null, suppressClick = false, pinned = null;
 function drawOverlay(tmp) {
   if (!layout) return;
   const dpr = window.devicePixelRatio || 1;
@@ -981,12 +979,20 @@ function drawOverlay(tmp) {
   ov.style.width = layout.width + 'px'; ov.style.height = layout.height + 'px';
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, layout.width, layout.height);
-  const r = tmp || range; if (!r) return;
-  const x0 = layout.ax.xc(r[0]), x1 = layout.ax.xc(r[1]);
-  octx.fillStyle = COL.sel; octx.fillRect(x0, AXIS_H - 4, x1 - x0, layout.height - AXIS_H);
-  octx.strokeStyle = COL.ink; octx.lineWidth = 1;
-  octx.beginPath(); octx.moveTo(Math.round(x0) + 0.5, AXIS_H - 4); octx.lineTo(Math.round(x0) + 0.5, layout.height - 6);
-  octx.moveTo(Math.round(x1) - 0.5, AXIS_H - 4); octx.lineTo(Math.round(x1) - 0.5, layout.height - 6); octx.stroke();
+  const r = tmp || range;
+  if (r) {
+    const x0 = layout.ax.xc(r[0]), x1 = layout.ax.xc(r[1]);
+    octx.fillStyle = COL.sel; octx.fillRect(x0, AXIS_H - 4, x1 - x0, layout.height - AXIS_H);
+    octx.strokeStyle = COL.ink; octx.lineWidth = 1;
+    octx.beginPath(); octx.moveTo(Math.round(x0) + 0.5, AXIS_H - 4); octx.lineTo(Math.round(x0) + 0.5, layout.height - 6);
+    octx.moveTo(Math.round(x1) - 0.5, AXIS_H - 4); octx.lineTo(Math.round(x1) - 0.5, layout.height - 6); octx.stroke();
+  }
+  const lane = pinned && layout.lanes.find(l => l.t === pinned.t);
+  const x = lane && layout.ax.x(pinned.s[0] / 10);
+  if (x != null && lane) {
+    const w = Math.max(1, IV * pinned.s[5] * layout.ax.k - 0.5), h = lane.kind === 'engine' ? 18 : lane.h;
+    octx.strokeStyle = COL.ink; octx.lineWidth = 2; octx.strokeRect(x - 3, lane.y - 3, w + 6, h + 6);
+  }
 }
 const canvasX = ev => ev.clientX - canvas.getBoundingClientRect().left;
 const laneAt = py => layout && layout.lanes.find(l => py >= l.y && py <= l.y + l.h + 2);
@@ -1029,9 +1035,16 @@ canvas.addEventListener('click', ev => {
     return;
   }
   const h = hit(ev); if (!h || !h.s) return;
-  const el = document.getElementById('pinned');
-  el.innerHTML = `<h3 style="margin-bottom:6px">Pinned sample</h3><div class="t-head" style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px;font-size:var(--s-sm)">${sampleHead(h)}</div><div class="frames">${stackHtml(h.s, 400)}</div>`;
+  pin(h);
 });
+function pin(h) {
+  pinned = h ? { t: h.lane.t, s: h.s } : null;
+  const el = document.getElementById('pinned');
+  el.hidden = !h;
+  el.innerHTML = h ? `<div class="pin-head">${sampleHead(h)}<button type="button" class="nav" id="pin-close">Close · Esc</button></div><div class="frames">${stackHtml(h.s, 400)}</div>` : '';
+  drawOverlay();
+}
+document.getElementById('pinned').addEventListener('click', e => { if (e.target.id === 'pin-close') pin(null); });
 
 // ---------- where the time went ----------
 const flame = document.getElementById('flame');
@@ -1398,7 +1411,8 @@ function select(i) {
     `${b.hash} · ${fmt(b.tx)} tx · ${b.parallelPct >= 0 ? fmt(b.parallelPct, 1) + '% parallel' : ''} · ${fmt(b.gas / 1e6, 1)} Mgas · ${fmt(b.execMs, 1)} ms exec · ${fmt(b.mgas)} MGas/s`;
   const segs = b.segs.map(s => `${fmt(s[1] - s[0])} ms`).join(' + ');
   document.getElementById('d-axis-note').textContent = `Window ${segs}, ${PAD} ms padding, ${IV} ms per sample`;
-  range = null; fstate.hl = null;
+  range = null; fstate.hl = null; pinned = null;
+  document.getElementById('pinned').hidden = true;
   draw(); phaseTable(b); poolTable(b); procLine(b);
   fillScopes(b); methodsChanged(true);
 }
@@ -1418,6 +1432,7 @@ document.getElementById('next').addEventListener('click', () => step(1));
 const typing = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' ||
   el.tagName === 'INPUT' && !/^(checkbox|radio|button)$/.test(el.type) || el.getAttribute('role') === 'textbox');
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (pinned) { pin(null); e.preventDefault(); } return; }
   if (e.altKey || e.ctrlKey || e.metaKey || typing(e.target)) return;
   const k = e.key;
   if (!e.shiftKey && (k === 'ArrowLeft' || k === 'k')) step(-1);
