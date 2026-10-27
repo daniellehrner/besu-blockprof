@@ -1541,14 +1541,14 @@ function rocksPanel(samples) {
   let html = '';
   if (known) {
     html += `<span>File reads (pread)</span><span class="split" style="width:${pct(known)}"><i class="bar file" style="width:${(100 * disk / known).toFixed(1)}%"></i><i class="bar cache" style="width:${(100 * cache / known).toFixed(1)}%"></i></span>` +
-      `<span class="n">${fmt(known)} ms</span><span class="n">${fmt(100 * known / tot)}%</span>` +
-      `<span class="src">${fmt(disk)} ms from disk · ${fmt(cache)} ms from page cache</span>`;
+      `<span class="n">${samplesOf(known)}</span><span class="n">${fmt(100 * known / tot)}%</span>` +
+      `<span class="src">${samplesOf(disk)} from disk · ${samplesOf(cache)} from page cache</span>`;
   }
   for (const [k, ms] of rows) {
     const [rw, kind] = k.split('|');
     const label = rw === 'read' && +kind === 1 ? `File reads (pread)${known ? ', source not known' : ''}` : `${rw === 'write' ? 'Write' : 'Read'}: ${IOK[+kind] || 'unclassified'}`;
     const cls = rw === 'write' ? 'write' : +kind === 1 || +kind === 11 ? 'file' : 'other';
-    html += `<span>${esc(label)}</span><span><i class="bar ${cls}" style="display:block;width:${pct(ms)}"></i></span><span class="n">${fmt(ms)} ms</span><span class="n">${fmt(100 * ms / tot)}%</span>`;
+    html += `<span>${esc(label)}</span><span><i class="bar ${cls}" style="display:block;width:${pct(ms)}"></i></span><span class="n">${samplesOf(ms)}</span><span class="n">${fmt(100 * ms / tot)}%</span>`;
   }
   el.innerHTML = html;
 }
