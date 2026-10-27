@@ -631,17 +631,19 @@ const tip = document.getElementById('tip');
 let layout = null;
 const LABEL_W = 178, BREAK_W = 34, AXIS_H = 34, MARK_H = 18;
 
+// [thread name pattern, name and scope key, lane mode, thread name prefix]
 const GROUPS = [
-  [/^engine-ordered-execution/, 'Engine API thread', 'single'],
-  [/^besu-block-cpu/, 'Parallel tx workers · besu-block-cpu', 'expanded'],
-  [/^ForkJoinPool-\d+-worker/, 'Trie node prefetch · ForkJoinPool', 'collapsed'],
-  [/^besu-block-account-trie/, 'Account trie · besu-block-account-trie', 'collapsed'],
-  [/^besu-block-storage-trie/, 'Storage trie · besu-block-storage-trie', 'collapsed'],
-  [/^(GC Thread|G1 )/, 'GC threads', 'collapsed'],
+  [/^engine-ordered-execution/, 'Engine API thread', 'single', 'engine-ordered-execution'],
+  [/^besu-block-cpu/, 'Parallel tx workers', 'expanded', 'besu-block-cpu'],
+  [/^ForkJoinPool-\d+-worker/, 'Trie node prefetch', 'collapsed', 'ForkJoinPool'],
+  [/^besu-block-account-trie/, 'Account trie', 'collapsed', 'besu-block-account-trie'],
+  [/^besu-block-storage-trie/, 'Storage trie', 'collapsed', 'besu-block-storage-trie'],
+  [/^(GC Thread|G1 )/, 'GC threads', 'collapsed', 'GC Thread, G1'],
 ];
+const ENGINE_SCOPE = 'g:' + GROUPS[0][1];
 const expanded = new Map();
 function groupOf(name) {
-  for (const [re, label, mode] of GROUPS) if (re.test(name)) return { key: label, label, mode };
+  for (const [re, label, mode, prefix] of GROUPS) if (re.test(name)) return { key: label, label, mode, prefix };
   const base = short(name).replace(/[-#\s]?\d+$/, '');
   return { key: 'o:' + base, label: base, mode: 'collapsed', other: true };
 }
@@ -669,17 +671,25 @@ function lanesFor(b) {
     if (G.other && !showOther) continue;
     if (G.other && G.busy < 2) continue;
     if (G.other && !otherHeader) { lanes.push({ kind: 'section', label: 'Other busy threads', h: 22 }); otherHeader = true; }
-    if (G.mode === 'single') { for (const t of G.threads) lanes.push({ kind: 'engine', t, h: procSeries(b, t) ? 48 : 30, label: short(t.name) }); continue; }
+    // the engine lane: 18 px of slices, then 12 px rows for RocksDB and, with kernel counters, off CPU and disk reads
+    if (G.mode === 'single') { for (const t of G.threads) lanes.push({ kind: 'engine', t, h: procSeries(b, t) ? 54 : 30, label: short(t.name) }); continue; }
     const busyThreads = G.threads.filter(t => busyN(t) > 0).sort(byName);
     const isOpen = expanded.has(G.key) ? expanded.get(G.key) : G.mode === 'expanded';
-    if (busyThreads.length === 1 && G.other) { lanes.push({ kind: 'thread', t: busyThreads[0], h: 9, label: short(busyThreads[0].name) }); continue; }
-    lanes.push({ kind: 'group', key: G.key, open: isOpen, label: G.label, n: G.threads.length, nb: busyThreads.length, h: 20 });
-    if (isOpen) for (const t of busyThreads) lanes.push({ kind: 'thread', t, h: 9, label: short(t.name) });
-    else lanes.push({ kind: 'hist', key: G.key, ts: G.threads, h: 26, label: `${busyThreads.length} of ${G.threads.length} busy` });
+    if (busyThreads.length === 1 && G.other) { lanes.push({ kind: 'thread', t: busyThreads[0], h: 12, label: short(busyThreads[0].name) }); continue; }
+    lanes.push({ kind: 'group', key: G.key, open: isOpen, label: G.label, prefix: G.prefix, n: G.threads.length, nb: busyThreads.length, h: 20 });
+    if (isOpen) for (const t of busyThreads) lanes.push({ kind: 'thread', t, h: 12, label: short(t.name) });
+    else lanes.push({ kind: 'hist', key: G.key, ts: G.threads, h: 26, label: busiestPhase(b, G.threads) });
   }
   return lanes;
 }
 
+// the header already gives the busy count, so a collapsed pool's lane says what the pool did
+function busiestPhase(b, threads) {
+  const n = {};
+  for (const t of threads) for (const s of t.s) if (busyAct(s[3]) && inSegs(b.segs, s[0] / 10)) n[s[2]] = (n[s[2]] || 0) + s[5];
+  const top = Object.entries(n).sort((x, y) => y[1] - x[1])[0];
+  return top ? 'mostly ' + (PHASE_LABEL[D.phases[top[0]]] || D.phases[top[0]]) : '';
+}
 function axisFor(b, width) {
   const segs = b.segs;
   const total = sum(segs.map(s => s[1] - s[0]));
@@ -742,7 +752,7 @@ function draw() {
     ctx.fillText(`${fmt(gap)} ms cut (CL turnaround)`, 0, 0); ctx.restore();
   }
   // log markers
-  const marks = [[b.execStart, 'exec start'], [b.logT, 'Imported log'], [b.fcuT, 'FCU log']];
+  const marks = [[b.execStart, 'rememberBlock start'], [b.logT, 'Imported log'], [b.fcuT, 'FCU log']];
   if (b.fcuFirst != null) marks.push([b.fcuFirst, 'FCU first sample']);
   ctx.font = `11px ${css('--f-cond')}`;
   for (const [t, l] of marks) {
@@ -750,6 +760,8 @@ function draw() {
     const x = ax.x(t); if (x == null) continue;
     ctx.strokeStyle = COL.ink; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
     ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, AXIS_H + 2); ctx.lineTo(Math.round(x) + 0.5, height - 6); ctx.stroke(); ctx.setLineDash([]);
+    const tw = ctx.measureText(l).width;
+    ctx.fillStyle = COL.surface; ctx.fillRect(x - tw / 2 - 3, AXIS_H + 2, tw + 6, 14);
     ctx.fillStyle = COL.ink; ctx.textAlign = 'center'; ctx.fillText(l, x, AXIS_H + 12);
   }
   ctx.textAlign = 'left';
@@ -763,16 +775,18 @@ function draw() {
       if (l.kind === 'group') {
         const w0 = ctx.measureText(caret + l.label.toUpperCase()).width;
         ctx.fillStyle = COL.muted; ctx.font = `11px ${css('--f-cond')}`;
-        ctx.fillText(`${l.nb} of ${l.n} threads busy · click to ${l.open ? 'collapse' : 'expand'}`, 16 + w0, l.y + 14);
+        ctx.fillText(`${l.prefix ? l.prefix + ' · ' : ''}${l.nb} of ${l.n} threads busy · click to ${l.open ? 'collapse' : 'expand'}`, 16 + w0, l.y + 14);
       }
       ctx.strokeStyle = COL.grid; ctx.beginPath(); ctx.moveTo(8, l.y + 18.5); ctx.lineTo(width - 8, l.y + 18.5); ctx.stroke();
       continue;
     }
-    ctx.fillStyle = COL['ink-2']; ctx.font = `${l.kind === 'engine' ? '600 12px' : '11px'} ${css('--f-cond')}`;
-    if (l.kind === 'hist') { ctx.fillText(l.label, 8, l.y + 16); drawHist(b, l, ax); continue; }
-    ctx.fillText(l.label, 8, l.y + Math.min(l.h, 14) / 2 + 4);
     const engine = l.kind === 'engine';
     const rowH = engine ? 18 : l.h;
+    ctx.fillStyle = COL['ink-2']; ctx.font = `${engine ? '600 11px' : '11px'} ${css('--f-cond')}`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(fitText(ctx, l.label, LABEL_W - 12), 8, l.y + (l.kind === 'hist' ? l.h : rowH) / 2);
+    ctx.textBaseline = 'alphabetic';
+    if (l.kind === 'hist') { drawHist(b, l, ax); continue; }
     for (const s of l.t.s) {
       const tt = s[0] / 10; const x = ax.x(tt); if (x == null) continue;
       const w = Math.max(1, IV * s[5] * ax.k - 0.5);
@@ -785,17 +799,18 @@ function draw() {
       }
       ctx.fillStyle = COL[fam]; ctx.fillRect(x, l.y, w, rowH);
       if (act === 1 || act === 2) {
-        if (engine) ioMark(s, x, l.y + rowH + 2, w, 8);
+        if (engine) ioMark(s, x, l.y + rowH + 10 - (act === 2 ? 5 : 4), w, act === 2 ? 5 : 4);
         else ioMark(s, x, l.y + rowH - 3, w, 3);
       }
     }
     if (engine) {
-      ctx.fillStyle = COL.muted; ctx.font = `10px ${css('--f-cond')}`;
-      ctx.fillText('in RocksDB', 8, l.y + rowH + 10);
       const ps = procSeries(b, l.t);
+      ctx.fillStyle = COL.muted; ctx.font = `11px ${css('--f-cond')}`;
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      for (const [i, sub] of (ps ? ['in RocksDB', 'off CPU', 'read from disk'] : ['in RocksDB']).entries()) ctx.fillText(sub, LABEL_W - 6, l.y + rowH + 12 * i + 6);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
       if (ps) {
-        ctx.fillText('off CPU', 8, l.y + 39);
-        ctx.fillText('disk reads', 8, l.y + 48);
+        const offBase = l.y + rowH + 23, diskBase = l.y + rowH + 35;
         // one bar per sample interval: blocked share of it, and bytes read from the device (log scale)
         for (const sp of Object.values(requestSpans(b)).filter(Boolean)) {
           for (let a = Math.floor((sp[0] - IV) / IV) * IV; a < sp[1] + IV; a += IV) {
@@ -803,8 +818,8 @@ function draw() {
             const x0 = ax.x(a), x1 = ax.x(a + IV); if (x0 == null || x1 == null) continue;
             const w = Math.max(1, x1 - x0 - 0.5);
             const off = p.blocked / IV;
-            if (off > 0.05) { const hh = Math.max(1, 7 * Math.min(1, off)); ctx.fillStyle = COL.blocked; ctx.fillRect(x0, l.y + 39 - hh, w, hh); }
-            if (p.disk > 0) { const hh = Math.max(2, 7 * Math.min(1, Math.log2(1 + p.disk / 4096) / 6)); ctx.fillStyle = COL.ink; ctx.fillRect(x0, l.y + 48 - hh, w, hh); }
+            if (off > 0.05) { const hh = Math.max(1, 10 * Math.min(1, off)); ctx.fillStyle = COL.blocked; ctx.fillRect(x0, offBase - hh, w, hh); }
+            if (p.disk > 0) { const hh = Math.max(2, 10 * Math.min(1, Math.log2(1 + p.disk / 4096) / 6)); ctx.fillStyle = COL.ink; ctx.fillRect(x0, diskBase - hh, w, hh); }
           }
         }
       }
@@ -1008,7 +1023,7 @@ canvas.addEventListener('click', ev => {
   const lane = laneAt(py); if (!lane) return;
   if (lane.kind === 'group') { expanded.set(lane.key, !lane.open); draw(); return; }
   if (px < LABEL_W) {
-    if (lane.kind === 'engine') setScope('g:' + GROUPS[0][1]);
+    if (lane.kind === 'engine') setScope(ENGINE_SCOPE);
     else if (lane.kind === 'hist') setScope('g:' + lane.key);
     else if (lane.t) setScope('t:' + lane.t.name);
     return;
@@ -1022,7 +1037,7 @@ canvas.addEventListener('click', ev => {
 const flame = document.getElementById('flame');
 const fctx = flame.getContext('2d');
 const ROW = 17;
-let scope = 'g:' + GROUPS[0][1];
+let scope = ENGINE_SCOPE;
 let fstate = { root: null, zoom: null, hl: null, rects: [], total: 0 };
 let topSort = 'self';
 let request = 'np';
@@ -1056,7 +1071,7 @@ function fillScopes(b) {
   const sel = document.getElementById('m-scope');
   const keys = new Set();
   for (const t of b.threads) if (t.s.some(s => busyAct(s[3]) && inSegs(b.segs, s[0] / 10))) keys.add(groupOf(t.name).key);
-  const opts = GROUPS.map(g => 'g:' + g[1]).filter(v => keys.has(v.slice(2)) || v === 'g:' + GROUPS[0][1]);
+  const opts = GROUPS.map(g => 'g:' + g[1]).filter(v => keys.has(v.slice(2)) || v === ENGINE_SCOPE);
   opts.push('all');
   if (!opts.includes(scope)) opts.push(scope);
   sel.innerHTML = '';
@@ -1117,10 +1132,10 @@ function buildTree(samples) {
   return root;
 }
 function dominant(fam) { let best = 'other', bv = -1; for (const [k, v] of Object.entries(fam)) if (v > bv) { bv = v; best = k; } return best; }
-function fitText(text, w) {
-  if (fctx.measureText(text).width <= w) return text;
+function fitText(c, text, w) {
+  if (c.measureText(text).width <= w) return text;
   let lo = 0, hi = text.length;
-  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (fctx.measureText(text.slice(0, m) + '…').width <= w) lo = m; else hi = m - 1; }
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (c.measureText(text.slice(0, m) + '…').width <= w) lo = m; else hi = m - 1; }
   return lo > 1 ? text.slice(0, lo) + '…' : '';
 }
 const everyFrame = () => !document.getElementById('m-fold').checked;
@@ -1186,7 +1201,7 @@ function drawFlame() {
     fctx.globalAlpha = 1;
     if (w > 28) {
       const label = first.id === -1 ? `${scopeLabel(scope)} · ${requestLabel()} · ${fmt(first.v)} ms` : `${chainLabel(ch)} · ${fmt(first.v)} ms`;
-      const t = fitText(label, w - 8);
+      const t = fitText(fctx, label, w - 8);
       if (t) { fctx.fillStyle = java ? COL.ink : COL['ink-2']; fctx.fillText(t, x + 4, y + ROW / 2 + 0.5); }
     }
     fstate.rects.push({ x, y, w, ch });
@@ -1194,7 +1209,7 @@ function drawFlame() {
   if (top) {
     fctx.fillStyle = COL.bg; fctx.fillRect(0.5, 0.5, W - 1, ROW - 1);
     fctx.fillStyle = COL['ink-2'];
-    fctx.fillText(fitText(`◂ ${scopeLabel(scope)} · ${requestLabel()} · ${fmt(root.v)} ms · zoomed to ${fmt(100 * zoom.v / root.v, 1)}%, click here to zoom out`, W - 8), 4, ROW / 2 + 0.5);
+    fctx.fillText(fitText(fctx, `◂ ${scopeLabel(scope)} · ${requestLabel()} · ${fmt(root.v)} ms · zoomed to ${fmt(100 * zoom.v / root.v, 1)}%, click here to zoom out`, W - 8), 4, ROW / 2 + 0.5);
     fstate.rects.push({ x: 0, y: 0, w: W, ch: [root], back: true });
   }
   (function rec(n, x, d) {
@@ -1314,7 +1329,7 @@ function methodsChanged(rebuild) {
   const threads = new Set(samples.map(x => x[1].name)).size;
   const ms = sum(samples.map(x => x[2]));
   const all = document.getElementById('m-idle').checked ? ms : sum(selectedSamples(b, true).map(x => x[2]));
-  const n = ms / IV, eng = scope === 'g:' + GROUPS[0][1];
+  const n = ms / IV, eng = scope === ENGINE_SCOPE;
   const unit = eng ? 'ms' : 'thread-ms';
   const where = (eng ? ' on the engine thread' : '') + (range ? ' in the selected time range' : '');
   document.getElementById('m-total').innerHTML =
