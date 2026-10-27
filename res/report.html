@@ -293,6 +293,7 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
           </div>
           <div>
             <h3 style="margin-bottom:6px">Methods</h3>
+            <p class="sub" id="m-note" style="margin-bottom:6px"></p>
             <div class="scroll"><table id="m-top"></table></div>
           </div>
         </div>
@@ -1141,7 +1142,7 @@ flame.addEventListener('mousemove', ev => {
   const names = q.ch.map(x => x.id === -1 ? 'all samples in the selection' : nameOf(x.id));
   const list = names.length > 40 ? [...names.slice(0, 20), `… ${names.length - 40} more …`, ...names.slice(-20)] : names;
   tip.innerHTML = `<div class="t-head"><span class="chip"><i class="sw" style="background:var(--c-${dominant(n.fam)})"></i>${esc(FAM_LABEL[dominant(n.fam)])}</span>` +
-    `<span class="mono">${fmt(n.v, 0)} ms · ${fmt(100 * n.v / tot, 1)}% of ${requestLabel()} selection</span>` +
+    `<span class="mono">${fmt(n.v, 0)} ms in ${fmt(n.v / IV)} sample${n.v === IV ? '' : 's'} · ${fmt(100 * n.v / tot, 1)}% of ${requestLabel()} selection</span>` +
     (q.ch.length > 1 ? `<span class="chip">${q.ch.length} frames, caller first</span>` : '') + `</div>` +
     `<div class="frames" style="color:var(--ink)">${list.map(esc).join('\n')}</div>`;
   tip.hidden = false;
@@ -1174,13 +1175,18 @@ function topTable(samples) {
   const rows = [...keys].map(k => [k, self.get(k) || 0, total.get(k) || 0])
     .sort((a, b2) => topSort === 'self' ? b2[1] - a[1] : b2[2] - a[2]).slice(0, 40);
   const t = document.getElementById('m-top');
-  let html = `<thead><tr><th>Method</th><th class="num sortable" data-sort="self"${topSort === 'self' ? ' aria-sort="descending"' : ''}>Self ms</th><th class="num">Self</th><th class="num sortable" data-sort="total"${topSort === 'total' ? ' aria-sort="descending"' : ''}>Total ms</th><th class="num">Total</th></tr></thead><tbody>`;
+  const n = all / IV;
+  // every time is a whole number of samples, which is easy to mistake for rounding when there are few
+  document.getElementById('m-note').textContent =
+    `${fmt(n)} sample${n === 1 ? '' : 's'}. Each counts as the ${IV} ms between two samples, so every time here is a multiple of ${IV} ms.` +
+    (n && n < 100 ? ' With this few samples the times and shares are rough.' : '');
+  let html = `<thead><tr><th>Method</th><th class="num" title="Samples with this method on top of the stack">Samples</th><th class="num sortable" data-sort="self"${topSort === 'self' ? ' aria-sort="descending"' : ''}>Self ms</th><th class="num">Self</th><th class="num sortable" data-sort="total"${topSort === 'total' ? ' aria-sort="descending"' : ''}>Total ms</th><th class="num">Total</th></tr></thead><tbody>`;
   for (const [k, sv, tv] of rows) {
     const sp = simple(k), pkg = k.endsWith(sp) ? k.slice(0, k.length - sp.length) : '';
     html += `<tr data-k="${esc(k).replace(/"/g, '&quot;')}" aria-selected="${fstate.hl === k}" tabindex="0"><td class="m" title="${esc(k).replace(/"/g, '&quot;')}"><span class="pkg">${esc(pkg)}</span>${esc(sp)}</td>` +
-      `<td class="num">${sv ? fmt(sv) : '·'}</td><td class="num">${sv ? fmt(100 * sv / all, 1) + '%' : ''}</td><td class="num">${fmt(tv)}</td><td class="num">${fmt(100 * tv / all, 1)}%</td></tr>`;
+      `<td class="num">${sv ? fmt(sv / IV) : '·'}</td><td class="num">${sv ? fmt(sv) : '·'}</td><td class="num">${sv ? fmt(100 * sv / all, 1) + '%' : ''}</td><td class="num">${fmt(tv)}</td><td class="num">${fmt(100 * tv / all, 1)}%</td></tr>`;
   }
-  if (!rows.length) html += `<tr><td colspan="5">No samples in this selection.</td></tr>`;
+  if (!rows.length) html += `<tr><td colspan="6">No samples in this selection.</td></tr>`;
   t.innerHTML = html + '</tbody>';
   t.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => { topSort = th.dataset.sort; methodsChanged(false); }));
   t.querySelectorAll('tbody tr[data-k]').forEach(tr => {
@@ -1224,8 +1230,9 @@ function methodsChanged(rebuild) {
   rc.textContent = range ? `${fmt(range[0] - b.execStart)} to ${fmt(range[1] - b.execStart)} ms` : 'Whole window';
   document.getElementById('m-clear').hidden = !range;
   const threads = new Set(samples.map(x => x[1].name)).size;
+  const count = samples.reduce((a, [s]) => a + s[5], 0);
   document.getElementById('m-total').textContent =
-    `${requestLabel()}: ${fmt(fstate.root.v)} thread-ms in ${fmt(samples.length)} samples from ${threads} thread${threads === 1 ? '' : 's'}` +
+    `${requestLabel()}: ${fmt(fstate.root.v)} thread-ms in ${fmt(count)} sample${count === 1 ? '' : 's'} from ${threads} thread${threads === 1 ? '' : 's'}` +
     (range ? ' in the selected time range.' : '. The button labels give the engine thread time of each request.');
   drawFlame(); topTable(samples); rocksPanel(samples);
 }
