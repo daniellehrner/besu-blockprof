@@ -27,6 +27,17 @@ On the machine running Besu:
    sudo ./besu-blockprof record
    ```
    It reads Besu's log from `/var/log/besu`; pass `--log <file or directory>` if Besu writes it elsewhere. At the end it prints the path of the report, `besu-blockprof-<UTC time>.html` in the current directory.
+
+   async-profiler runs with these defaults:
+   - `-d 300`: profile for 300 seconds
+   - `-i 5ms`: one sample per thread every 5 ms
+   - `-e wall`: wall-clock samples of every thread, including waiting ones
+   - `--cstack vm`: keep native frames, which the RocksDB breakdown needs
+
+   To change them, put async-profiler arguments after `--`. Each one replaces only its own default, so this profiles for one minute with a sample every 10 ms, and keeps `-e wall --cstack vm`:
+   ```
+   sudo ./besu-blockprof record -- -d 60 -i 10ms
+   ```
 4. Copy the report to your machine and open it in a browser. It is a single file and works offline:
    ```
    scp <node>:besu-blockprof-*.html .
