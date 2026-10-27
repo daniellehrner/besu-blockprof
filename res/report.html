@@ -190,6 +190,15 @@ td { padding: 4px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap
 #blocks tbody tr[aria-selected="true"] td { background: var(--bg); }
 #blocks tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
 #blocks tbody tr:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+#blocks th { vertical-align: bottom; }
+#blocks button.sort { font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; background: none; border: 0; padding: 0; min-height: 28px; cursor: pointer; display: inline-flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; text-align: left; }
+#blocks th.num button.sort { align-items: flex-end; text-align: right; }
+#blocks th[aria-sort] button.sort, #blocks button.sort:hover { color: var(--ink); }
+#blocks button.sort:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+#blocks .arr { display: inline-block; width: 1em; text-align: right; }
+#blocks td b { font-weight: 600; }
+#blocks .ratio { display: inline-block; width: 5ch; text-align: right; color: var(--muted); font-size: var(--s-xs); }
+#blocks tfoot td { border-top: 1px solid var(--axis); border-bottom: 0; color: var(--ink-2); font-weight: 500; }
 td.bar { width: 46%; min-width: 260px; }
 .stack { display: flex; height: 12px; gap: 1px; }
 .stack i { display: block; height: 100%; min-width: 0; }
@@ -238,7 +247,7 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
   <section class="panel">
     <div class="panel-head">
       <h2>Blocks in the capture</h2>
-      <span class="sub">Engine thread time per block, stacked by phase: newPayload, then FCU. Select a row to open its timeline.</span>
+      <span class="sub">Engine thread time per block, stacked by phase: newPayload, then FCU. Select a row to open its timeline. Bold values are at least 1.5× the capture average.</span>
     </div>
     <div class="panel-body">
       <div class="legend" id="legend-top"></div>
@@ -534,43 +543,72 @@ legend(document.getElementById('legend-tl'), true);
 const FAM_ORDER = FAMILIES.map(f => f[0]);
 let maxEng = Math.max(1, ...D.blocks.map(b => b.npMs + b.fcuMs));
 let selected = 0;
-(function blockTable() {
-  const t = document.getElementById('blocks');
-  t.innerHTML = `<thead><tr><th>Block</th><th class="num">Txs</th><th class="num">Parallel</th><th class="num">Mgas</th>` +
-    `<th class="num" title="Besu's own figure from the Imported line: rememberBlock start to the log line">Exec (log)<span class="th-sub">from Imported line</span></th>` +
-    `<th class="num">newPayload<span class="th-sub">engine thread</span></th><th class="num">FCU<span class="th-sub">engine thread</span></th><th>Engine thread: newPayload | FCU</th></tr></thead><tbody></tbody>`;
-  const tb = t.tBodies[0];
-  D.blocks.forEach((b, i) => {
-    const tr = document.createElement('tr');
-    tr.tabIndex = 0; tr.dataset.i = i;
-    tr.innerHTML = `<td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="bar"><div class="stack"></div></td>`;
-    const c = tr.children;
-    c[0].textContent = '#' + fmt(b.num);
-    c[1].textContent = fmt(b.tx);
-    c[2].textContent = b.parallelPct >= 0 ? fmt(b.parallelPct, 1) + '%' : '–';
-    c[3].textContent = fmt(b.gas / 1e6, 1);
-    c[4].textContent = fmt(b.execMs, 1) + ' ms';
-    c[5].textContent = fmt(b.npMs) + ' ms';
-    c[6].textContent = b.fcuMs ? fmt(b.fcuMs) + ' ms' : '–';
-    const st = c[7].firstChild;
-    const W = 100 / maxEng;
+const mean = a => a.length ? sum(a) / a.length : 0;
+// has: which blocks a column's average covers; slow: mark values far above that average
+const BCOLS = [
+  { k: 'num', h: 'Block', v: b => b.num, f: v => '#' + fmt(v), asc: true },
+  { k: 'tx', h: 'Txs', v: b => b.tx, f: v => fmt(v) },
+  { k: 'par', h: 'Parallel', v: b => b.parallelPct, f: v => v >= 0 ? fmt(v, 1) + '%' : '–', has: v => v >= 0 },
+  { k: 'gas', h: 'Mgas', v: b => b.gas / 1e6, f: v => fmt(v, 1) },
+  { k: 'mgas', h: 'MGas/s', v: b => b.mgas, f: v => fmt(v) },
+  { k: 'exec', h: 'Exec (log)', sub: 'from Imported line', title: "Besu's own figure from the Imported line: rememberBlock start to the log line", v: b => b.execMs, f: v => fmt(v, 1) + ' ms', slow: true },
+  { k: 'np', h: 'newPayload', sub: 'engine thread', v: b => b.npMs, f: v => fmt(v) + ' ms', slow: true },
+  { k: 'fcu', h: 'FCU', sub: 'engine thread', v: b => b.fcuMs, f: v => v ? fmt(v) + ' ms' : '–', has: v => v > 0, slow: true },
+];
+for (const c of BCOLS) c.avg = mean(D.blocks.map(c.v).filter(c.has || (() => true)));
+const blocksEl = document.getElementById('blocks');
+let bsort = { k: 'num', dir: 1 };
+let order = D.blocks.map((_, i) => i); // the table's row order, which the block hotkeys follow too
+(function blockHead() {
+  blocksEl.innerHTML = '<thead><tr>' + BCOLS.map(c =>
+    `<th class="${c.k === 'num' ? '' : 'num'}" data-k="${c.k}"${c.title ? ` title="${esc(c.title)}"` : ''}><button type="button" class="sort">` +
+    `<span>${c.h}<span class="arr" aria-hidden="true"></span></span>${c.sub ? `<span class="th-sub">${c.sub}</span>` : ''}</button></th>`).join('') +
+    '<th class="bar-col">Engine thread: newPayload | FCU</th></tr></thead><tbody></tbody><tfoot><tr>' +
+    BCOLS.map(c => c.k === 'num' ? '<td>Average</td>' : `<td class="num">${c.f(c.avg)}${c.slow ? '<span class="ratio"></span>' : ''}</td>`).join('') +
+    `<td class="bar-col">${fmt(D.blocks.length)} blocks</td></tr></tfoot>`;
+  blocksEl.tHead.addEventListener('click', e => {
+    const th = e.target.closest('th[data-k]'); if (!th) return;
+    const c = BCOLS.find(x => x.k === th.dataset.k);
+    bsort = bsort.k === c.k ? { k: c.k, dir: -bsort.dir } : { k: c.k, dir: c.asc ? 1 : -1 };
+    blockTable();
+  });
+  const tb = blocksEl.tBodies[0];
+  tb.addEventListener('click', e => { const tr = e.target.closest('tr'); if (tr) select(+tr.dataset.i); });
+  tb.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const tr = e.target.closest('tr'); if (tr) { e.preventDefault(); select(+tr.dataset.i); }
+  });
+})();
+function blockTable() {
+  const c = BCOLS.find(x => x.k === bsort.k);
+  order = D.blocks.map((_, i) => i).sort((x, y) => bsort.dir * (c.v(D.blocks[x]) - c.v(D.blocks[y])) || x - y);
+  for (const th of blocksEl.tHead.querySelectorAll('th[data-k]')) {
+    const on = th.dataset.k === bsort.k;
+    if (on) th.setAttribute('aria-sort', bsort.dir > 0 ? 'ascending' : 'descending'); else th.removeAttribute('aria-sort');
+    th.querySelector('.arr').textContent = on ? (bsort.dir > 0 ? '▴' : '▾') : '';
+  }
+  const W = 100 / maxEng;
+  blocksEl.tBodies[0].innerHTML = order.map(i => {
+    const b = D.blocks[i];
+    const cells = BCOLS.map(c => {
+      const v = c.v(b), text = c.f(v);
+      if (!c.slow) return `<td class="num">${text}</td>`;
+      const r = c.avg ? v / c.avg : 0;
+      return r >= 1.5 ? `<td class="num"><b>${text}</b><span class="ratio">${fmt(r, 1)}×</span></td>` : `<td class="num">${text}<span class="ratio"></span></td>`;
+    });
+    cells[0] = cells[0].replace('class="num"', '');
+    let bar = '';
     for (const req of ['np', 'fcu']) {
       for (const f of FAM_ORDER) {
         const ms = b.eng.fam[req + ':' + f];
-        if (!ms) continue;
-        const i2 = document.createElement('i');
-        i2.style.width = (ms * W) + '%';
-        i2.style.background = `var(--c-${f})`;
-        i2.title = `${req === 'np' ? 'newPayload' : 'FCU'} · ${FAM_LABEL[f]}: ${fmt(ms)} ms`;
-        st.append(i2);
+        if (ms) bar += `<i style="width:${ms * W}%;background:var(--c-${f})" title="${req === 'np' ? 'newPayload' : 'FCU'} · ${esc(FAM_LABEL[f])}: ${fmt(ms)} ms"></i>`;
       }
-      if (req === 'np') { const g = document.createElement('i'); g.className = 'brk'; st.append(g); }
+      if (req === 'np') bar += '<i class="brk"></i>';
     }
-    tr.addEventListener('click', () => select(i));
-    tr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(i); } });
-    tb.append(tr);
-  });
-})();
+    return `<tr tabindex="0" data-i="${i}" aria-selected="${i === selected}">${cells.join('')}<td class="bar bar-col"><div class="stack">${bar}</div></td></tr>`;
+  }).join('');
+}
+blockTable();
 
 // ---------- timeline ----------
 const canvas = document.getElementById('tl');
