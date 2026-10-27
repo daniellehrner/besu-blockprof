@@ -201,8 +201,11 @@ button.icon { width: 32px; height: 32px; padding: 0; font-weight: 600; }
 #m-top tbody tr { cursor: pointer; }
 #m-top tbody tr:hover td { background: var(--bg); }
 #m-top tbody tr[aria-selected="true"] td { background: var(--bg); box-shadow: inset 0 -1px 0 var(--ink); }
-#m-top th.sortable { cursor: pointer; }
-#m-top th[aria-sort] { color: var(--ink); }
+#m-top td.n { color: var(--ink); font-weight: 500; }
+#m-top td.share { color: var(--muted); }
+.mhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 6px; }
+#m-note b { font-family: var(--f-mono); font-weight: 500; color: var(--ink); }
+.mgrid.one { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 5px; overflow: hidden; }
 .seg button { font: inherit; font-size: var(--s-sm); background: var(--surface); color: var(--ink-2); border: 0; padding: 4px 12px; cursor: pointer; display: inline-flex; gap: 6px; align-items: baseline; }
 .seg button + button { border-left: 1px solid var(--axis); }
@@ -225,7 +228,7 @@ caption { caption-side: top; text-align: left; font-size: var(--s-xs); color: va
 
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: var(--s-sm); }
-th { text-align: left; font-family: var(--f-cond); font-weight: 500; font-size: var(--s-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
+th { text-align: left; font-family: var(--f-cond); font-weight: 500; font-size: var(--s-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--axis); white-space: nowrap; vertical-align: bottom; }
 th.num, td.num { text-align: right; }
 .th-sub { display: block; font-family: var(--f-sans); font-size: 10.5px; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); }
 button.link { font: inherit; color: var(--ink); background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
@@ -236,12 +239,11 @@ td { padding: 4px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap
 #blocks tbody tr[aria-selected="true"] td { background: var(--bg); }
 #blocks tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
 #blocks tbody tr:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
-#blocks th { vertical-align: bottom; }
-#blocks button.sort { font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; background: none; border: 0; padding: 0; min-height: 28px; cursor: pointer; display: inline-flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; text-align: left; }
-#blocks th.num button.sort { align-items: flex-end; text-align: right; }
-#blocks th[aria-sort] button.sort, #blocks button.sort:hover { color: var(--ink); }
-#blocks button.sort:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-#blocks .arr { display: inline-block; width: 1em; text-align: right; }
+th button.sort { font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; background: none; border: 0; padding: 0; min-height: 28px; cursor: pointer; display: inline-flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; text-align: left; }
+th.num button.sort { align-items: flex-end; text-align: right; }
+th[aria-sort] button.sort, th button.sort:hover { color: var(--ink); }
+th button.sort:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+th .arr { display: inline-block; width: 1em; text-align: right; }
 #blocks td b { font-weight: 600; }
 #blocks .ratio { display: inline-block; width: 5ch; text-align: right; color: var(--muted); font-size: var(--s-xs); }
 #blocks tfoot td { border-top: 1px solid var(--axis); border-bottom: 0; color: var(--ink-2); font-weight: 500; }
@@ -411,12 +413,11 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
         <div class="flame-scroll" id="flame-scroll"><canvas id="flame" aria-label="Flame graph of the selection"></canvas></div>
         <div class="mgrid">
           <div>
-            <h3 style="margin-bottom:6px">Inside RocksDB</h3>
+            <h3 style="margin-bottom:6px" id="rocks-h">Inside RocksDB</h3>
             <div class="rocks" id="m-rocks"></div>
           </div>
           <div>
-            <h3 style="margin-bottom:6px">Methods</h3>
-            <p class="sub" id="m-note" style="margin-bottom:6px"></p>
+            <div class="mhead"><h3>Methods</h3><span class="sub" id="m-note"></span></div>
             <div class="scroll"><table id="m-top"></table></div>
           </div>
         </div>
@@ -1431,6 +1432,7 @@ flame.addEventListener('click', ev => {
   drawFlame();
 });
 
+let showOnes = false;
 function topTable(samples) {
   const self = new Map(), total = new Map();
   let all = 0;
@@ -1444,23 +1446,32 @@ function topTable(samples) {
   }
   const keys = new Set([...self.keys()]);
   if (topSort === 'total') for (const k of total.keys()) keys.add(k);
-  const rows = [...keys].map(k => [k, self.get(k) || 0, total.get(k) || 0])
-    .sort((a, b2) => topSort === 'self' ? b2[1] - a[1] : b2[2] - a[2]).slice(0, 40);
-  const t = document.getElementById('m-top');
+  const col = topSort === 'self' ? 1 : 2;
+  const rows = [...keys].map(k => [k, self.get(k) || 0, total.get(k) || 0]).sort((a, b2) => b2[col] - a[col]);
+  // methods seen in a single sample are most of the list and say little, so they wait behind a button
+  const cnt = r => Math.round(r[col] / IV);
+  const many = rows.filter(r => cnt(r) > 1).slice(0, 40), ones = rows.filter(r => cnt(r) === 1);
   const n = all / IV;
   // every time is a whole number of samples, which is easy to mistake for rounding when there are few
-  document.getElementById('m-note').textContent =
-    `${fmt(n)} sample${n === 1 ? '' : 's'}. Each counts as the ${IV} ms between two samples, so every time here is a multiple of ${IV} ms.` +
-    (n && n < 100 ? ' With this few samples the times and shares are rough.' : '');
-  let html = `<thead><tr><th>Method</th><th class="num" title="Samples with this method on top of the stack">Samples</th><th class="num sortable" data-sort="self"${topSort === 'self' ? ' aria-sort="descending"' : ''}>Self ms</th><th class="num">Self</th><th class="num sortable" data-sort="total"${topSort === 'total' ? ' aria-sort="descending"' : ''}>Total ms</th><th class="num">Total</th></tr></thead><tbody>`;
-  for (const [k, sv, tv] of rows) {
+  document.getElementById('m-note').innerHTML = n ? `<b>${fmt(n)} sample${n === 1 ? '' : 's'} × ${IV} ms</b>: every time is a multiple of ${IV} ms` +
+    (n < 100 ? ', and with this few samples the shares are rough.' : '.') : '';
+  const share = v => fmt(100 * v / all, n < 100 ? 0 : 1) + '%';
+  const head = (k, label, title) => `<th class="num"${topSort === k ? ' aria-sort="descending"' : ''} title="${title}"><button type="button" class="sort" data-sort="${k}"><span>${label}<span class="arr" aria-hidden="true">${topSort === k ? '▾' : ''}</span></span></button></th>`;
+  let html = `<thead><tr><th>Method</th>${head('self', 'Self samples', 'Samples with this method on top of the stack')}<th class="num">Self</th>` +
+    `${head('total', 'Total samples', 'Samples with this method anywhere on the stack')}<th class="num">Total</th></tr></thead><tbody>`;
+  for (const [k, sv, tv] of showOnes ? many.concat(ones.slice(0, 200)) : many) {
     const sp = simple(k), pkg = k.endsWith(sp) ? k.slice(0, k.length - sp.length) : '';
     html += `<tr data-k="${esc(k).replace(/"/g, '&quot;')}" aria-selected="${searchEl.value === methodPattern(k)}" tabindex="0"><td class="m" title="${esc(k).replace(/"/g, '&quot;')}"><span class="pkg">${esc(pkg)}</span>${esc(sp)}</td>` +
-      `<td class="num">${sv ? fmt(sv / IV) : '·'}</td><td class="num">${sv ? fmt(sv) : '·'}</td><td class="num">${sv ? fmt(100 * sv / all, 1) + '%' : ''}</td><td class="num">${fmt(tv)}</td><td class="num">${fmt(100 * tv / all, 1)}%</td></tr>`;
+      `<td class="num n" title="${fmt(sv)} ms">${sv ? fmt(sv / IV) : '·'}</td><td class="num share" title="${fmt(sv)} ms">${sv ? share(sv) : ''}</td>` +
+      `<td class="num n" title="${fmt(tv)} ms">${fmt(tv / IV)}</td><td class="num share" title="${fmt(tv)} ms">${share(tv)}</td></tr>`;
   }
-  if (!rows.length) html += `<tr><td colspan="6">No samples in this selection.</td></tr>`;
+  if (ones.length && !showOnes) html += `<tr><td colspan="5"><button type="button" class="link" id="m-ones">Show ${fmt(ones.length)} method${ones.length === 1 ? '' : 's'} seen in 1 sample</button></td></tr>`;
+  if (!rows.length) html += `<tr><td colspan="5">No samples in this selection.</td></tr>`;
+  const t = document.getElementById('m-top');
   t.innerHTML = html + '</tbody>';
-  t.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => { topSort = th.dataset.sort; methodsChanged(false); }));
+  t.querySelectorAll('th button.sort').forEach(b2 => b2.addEventListener('click', () => { topSort = b2.dataset.sort; methodsChanged(false); }));
+  const more = t.querySelector('#m-ones');
+  if (more) more.addEventListener('click', () => { showOnes = true; methodsChanged(false); });
   t.querySelectorAll('tbody tr[data-k]').forEach(tr => {
     const on = () => { const p = methodPattern(tr.dataset.k); setSearch(searchEl.value === p ? '' : p); };
     tr.addEventListener('click', on);
@@ -1481,6 +1492,9 @@ function rocksPanel(samples) {
     m.set(k, (m.get(k) || 0) + ms);
   }
   const el = document.getElementById('m-rocks');
+  // without RocksDB samples the method table takes the full width under a one-line note
+  document.querySelector('.mgrid').classList.toggle('one', !tot);
+  document.getElementById('rocks-h').hidden = !tot;
   if (!tot) { el.innerHTML = `<span class="sub" style="grid-column:1/-1">No samples inside RocksDB in this selection.</span>`; return; }
   // file reads whose source is known share one row, split into disk and page cache
   const disk = m.get('read|1|disk') || 0, cache = m.get('read|1|cache') || 0, known = disk + cache;
@@ -1512,7 +1526,7 @@ function methodsChanged(rebuild) {
   const on = ['m-idle', 'm-java', 'm-fold'].filter(id => document.getElementById(id).checked).length;
   document.querySelector('#m-options summary').textContent = `Options${on ? ` (${on})` : ''} ▾`;
   const samples = selectedSamples(b);
-  if (rebuild || !fstate.root) { fstate.root = buildTree(samples); fstate.zoom = null; fstate.removed = []; fstate.mi = null; }
+  if (rebuild || !fstate.root) { fstate.root = buildTree(samples); fstate.zoom = null; fstate.removed = []; fstate.mi = null; showOnes = false; }
   const rc = document.getElementById('m-range');
   rc.innerHTML = range ? `${fmt(range[0] - b.execStart)} to ${fmt(range[1] - b.execStart)} ms<button type="button" class="x" id="m-clear" aria-label="Clear time range">×</button>` : 'Whole window · drag the timeline to narrow';
   const threads = new Set(samples.map(x => x[1].name)).size;
