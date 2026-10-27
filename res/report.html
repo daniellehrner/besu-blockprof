@@ -39,6 +39,10 @@
   --io-other: #6b727c;
   --blocked: #b0b6be;
   --match: #ee00ee;
+  --ft-java: #a5dea5;
+  --ft-cpp: #dcdc84;
+  --ft-native: #eea3a3;
+  --ft-lib: #d3d7dc;
   --sel: rgba(20, 23, 27, 0.07);
   --c-stateRoot: #2a78d6;
   --c-mainExec: #eb6834;
@@ -75,6 +79,10 @@
     --io-other: #9aa1ab;
     --blocked: #5d646e;
     --match: #d23bd2;
+    --ft-java: #3f7a3f;
+    --ft-cpp: #7a7a2e;
+    --ft-native: #8a3f3f;
+    --ft-lib: #4b525b;
     --sel: rgba(255, 255, 255, 0.09);
     --c-stateRoot: #3987e5;
     --c-mainExec: #d95926;
@@ -103,6 +111,10 @@
   --io-other: #9aa1ab;
   --blocked: #5d646e;
   --match: #d23bd2;
+  --ft-java: #3f7a3f;
+  --ft-cpp: #7a7a2e;
+  --ft-native: #8a3f3f;
+  --ft-lib: #4b525b;
   --sel: rgba(255, 255, 255, 0.09);
   --c-stateRoot: #3987e5;
   --c-mainExec: #d95926;
@@ -170,6 +182,19 @@ header { display: grid; gap: 10px; }
 .mgrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 24px; align-items: start; }
 @media (max-width: 1000px) { .mgrid { grid-template-columns: minmax(0, 1fr); } }
 .flame-scroll { border: 1px solid var(--grid); border-radius: 4px; }
+.ftools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; background: var(--bg); border-radius: 5px; padding: 6px 8px; font-size: var(--s-sm); color: var(--ink-2); }
+.search { display: inline-flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--axis); border-radius: 4px; padding: 0 8px; min-height: 32px; min-width: 0; }
+.search:focus-within { outline: 2px solid var(--ink); outline-offset: 1px; }
+.search svg { width: 14px; height: 14px; stroke: var(--muted); fill: none; stroke-width: 1.8; flex: none; }
+.search input { font: inherit; color: var(--ink); background: none; border: 0; outline: none; width: 24ch; min-width: 0; }
+#f-match { font-family: var(--f-mono); font-size: var(--s-xs); color: var(--ink); }
+#f-legend { font-size: var(--s-xs); }
+.help-wrap { position: relative; }
+button.icon { width: 32px; height: 32px; padding: 0; font-weight: 600; }
+.pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 15; width: min(480px, calc(100vw - 32px)); background: var(--surface); color: var(--ink-2); border: 1px solid var(--axis); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.16); padding: 12px 14px; display: grid; gap: 10px; font-size: var(--s-sm); }
+.keys { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; }
+.keys dt { font-family: var(--f-mono); font-size: var(--s-xs); color: var(--ink); }
+.keys dd { margin: 0; }
 #flame { display: block; cursor: pointer; }
 #m-top td.m { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
 #m-top td.m .pkg { color: var(--muted); }
@@ -324,10 +349,39 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
             <label><input type="checkbox" id="m-idle"> Include parked and syscall samples inside a phase</label>
             <label><input type="checkbox" id="m-java"> Count native time on the calling Java method</label>
             <label><input type="checkbox" id="m-fold"> Fold nested and pass-through calls</label>
+            <span class="help-wrap">
+              <button type="button" class="nav icon" id="help-btn" aria-label="Help and hotkeys" aria-expanded="false" aria-controls="help-pop">?</button>
+              <div class="pop" id="help-pop" role="dialog" aria-label="Help and hotkeys" hidden>
+                <dl class="keys">
+                  <dt>Click</dt><dd>Zoom into frame</dd>
+                  <dt>Click top bar</dt><dd>Zoom out one level</dd>
+                  <dt>0</dt><dd>Reset zoom</dd>
+                  <dt>Ctrl/Alt+Click</dt><dd>Remove stack</dd>
+                  <dt>Ctrl+F</dt><dd>Search</dd>
+                  <dt>N / Shift+N</dt><dd>Next / previous match</dd>
+                  <dt>Esc</dt><dd>Clear search, close</dd>
+                  <dt>← / →</dt><dd>Previous / next block</dd>
+                </dl>
+                <p>Drag across the timeline to pick a time range. Click a thread or pool name on the left of the timeline to look at just that thread or pool.</p>
+                <p>The flame graph draws every call level, like async-profiler does. Tick “Fold nested and pass-through calls” for a shallower graph: a bar labelled “first › n frames › last” is then a run of calls that only pass through, and “×8” marks 8 nested calls of the same method; hover a bar for the full list.</p>
+                <p>The search takes a regular expression and matches full frame names; click a method in the table to search for it. A removed stack only leaves the flame graph: the methods table and the RocksDB split still count it.</p>
+              </div>
+            </span>
           </div>
           <p class="sub" id="m-total"></p>
-          <p class="sub">Drag across the timeline to pick a time range. Click a thread or pool name on the left of the timeline to look at just that thread or pool. The flame graph draws every call level, like async-profiler does. Tick “Fold nested and pass-through calls” for a shallower graph: a bar labelled “first › n frames › last” is then a run of calls that only pass through, and “×8” marks 8 nested calls of the same method; hover a bar for the full list. Click a bar to zoom in and the top bar to zoom out; click a method in the table to highlight it.</p>
         </div>
+        <div class="ftools">
+          <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input type="search" id="f-search" aria-label="Search frames (regular expression)" placeholder="Search frames" autocomplete="off" spellcheck="false"></label>
+          <span id="f-match" aria-live="polite"></span>
+          <span class="chip" id="f-removed" hidden></span>
+          <span style="flex:1"></span>
+          <span>Colour by</span>
+          <span class="seg" role="group" aria-label="Colour by">
+            <button type="button" id="f-col-phase" aria-pressed="true">Phase</button>
+            <button type="button" id="f-col-ft" aria-pressed="false">Frame type</button>
+          </span>
+        </div>
+        <div class="legend" id="f-legend"></div>
         <div class="flame-scroll" id="flame-scroll"><canvas id="flame" aria-label="Flame graph of the selection"></canvas></div>
         <div class="mgrid">
           <div>
@@ -406,7 +460,7 @@ let COL = {};
 function readColors() {
   COL = {};
   for (const [k] of FAMILIES) COL[k] = css('--c-' + k);
-  for (const k of ['ink', 'ink-2', 'muted', 'grid', 'axis', 'surface', 'bg', 'wait', 'io-read', 'io-write', 'io-other', 'blocked', 'match', 'hair']) COL[k] = css('--' + k);
+  for (const k of ['ink', 'ink-2', 'muted', 'grid', 'axis', 'surface', 'bg', 'wait', 'io-read', 'io-write', 'io-other', 'blocked', 'match', 'hair', 'ft-java', 'ft-cpp', 'ft-native', 'ft-lib']) COL[k] = css('--' + k);
 }
 readColors();
 
@@ -1051,7 +1105,7 @@ const flame = document.getElementById('flame');
 const fctx = flame.getContext('2d');
 const ROW = 17;
 let scope = ENGINE_SCOPE;
-let fstate = { root: null, zoom: null, hl: null, rects: [], total: 0 };
+let fstate = { root: null, zoom: null, rects: [], removed: [], matches: [], mi: null };
 let topSort = 'self';
 let request = 'np';
 // newPayload owns the window up to halfway between its end and the start of FCU
@@ -1135,7 +1189,7 @@ function buildTree(samples) {
     const stack = D.stacks[s[1]];
     let ids = stack.slice(0, leafIndex(stack) + 1);
     if (everyFrame()) ids = unfold(ids);
-    if (byGroup) ids.unshift(synthId(groupOf(t.name).label));
+    if (byGroup) { const g = synthId(groupOf(t.name).label); groupIds.add(g); ids.unshift(g); }
     for (const id of ids) {
       let c = n.c.get(id);
       if (!c) { c = { id, v: 0, c: new Map(), fam: {}, parent: n }; n.c.set(id, c); }
@@ -1144,6 +1198,76 @@ function buildTree(samples) {
   }
   return root;
 }
+const groupIds = new Set();
+// ---------- flame graph search, colours and removed stacks ----------
+const searchEl = document.getElementById('f-search');
+let fsearch = null;
+const mcache = new Map();
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function setSearch(v) {
+  if (searchEl.value !== v) searchEl.value = v;
+  // a half-typed expression still searches, as plain text
+  try { fsearch = v ? new RegExp(v) : null; } catch { fsearch = new RegExp(reEsc(v)); }
+  mcache.clear(); fstate.mi = null;
+  drawFlame(); markMethodRow();
+}
+searchEl.addEventListener('input', () => setSearch(searchEl.value));
+const matchId = id => {
+  if (!fsearch || id === -1 || groupIds.has(id)) return false;
+  let m = mcache.get(id);
+  if (m == null) mcache.set(id, m = fsearch.test(nameOf(id)));
+  return m;
+};
+// outermost matching nodes, left to right as drawn, so nested matches count once
+function findMatches() {
+  const out = [];
+  if (fsearch && fstate.root) (function rec(n) {
+    if (matchId(n.id)) { out.push(n); return; }
+    for (const c of [...n.c.values()].sort((a, b2) => b2.v - a.v)) rec(c);
+  })(fstate.root);
+  return out;
+}
+function nextMatch(d) {
+  const ms = fstate.matches; if (!ms.length) return;
+  fstate.mi = fstate.mi == null ? (d > 0 ? 0 : ms.length - 1) : (fstate.mi + d + ms.length) % ms.length;
+  fstate.zoom = ms[fstate.mi];
+  drawFlame();
+}
+function removeStack(n) {
+  for (let p = n.parent; p; p = p.parent) {
+    p.v -= n.v;
+    for (const [f, v] of Object.entries(n.fam)) p.fam[f] -= v;
+  }
+  n.parent.c.delete(n.id);
+  fstate.removed.push(n);
+  for (let z = fstate.zoom; z; z = z.parent) if (z === n) { fstate.zoom = null; break; }
+  if (fstate.zoom && fstate.zoom.v <= 0) fstate.zoom = null;
+  drawFlame();
+}
+function undoRemove() {
+  const n = fstate.removed.pop(); if (!n) return;
+  n.parent.c.set(n.id, n);
+  for (let p = n.parent; p; p = p.parent) {
+    p.v += n.v;
+    for (const [f, v] of Object.entries(n.fam)) p.fam[f] = (p.fam[f] || 0) + v;
+  }
+  drawFlame();
+}
+document.getElementById('f-removed').addEventListener('click', e => { if (e.target.id === 'f-undo') undoRemove(); });
+let colorBy = 'phase';
+const FTYPES = [['java', 'Java'], ['cpp', 'C++ (JVM, RocksDB)'], ['native', 'Native (C)'], ['lib', 'Library without symbols']];
+const ftype = name => name.startsWith('/') ? 'lib' : isJava(name) ? 'java' : name.includes('::') ? 'cpp' : 'native';
+function setColorBy(v) {
+  colorBy = v;
+  document.getElementById('f-col-phase').setAttribute('aria-pressed', String(v === 'phase'));
+  document.getElementById('f-col-ft').setAttribute('aria-pressed', String(v === 'ft'));
+  document.getElementById('f-legend').innerHTML = (v === 'phase' ? phaseLegend() :
+    FTYPES.map(([k, l]) => `<span><i class="sw" style="background:var(--ft-${k})"></i>${l}</span>`).join('')) +
+    '<span><i class="sw" style="background:var(--match)"></i>Search match</span>';
+  if (fstate.root) drawFlame();
+}
+document.getElementById('f-col-phase').addEventListener('click', () => setColorBy('phase'));
+document.getElementById('f-col-ft').addEventListener('click', () => setColorBy('ft'));
 function dominant(fam) { let best = 'other', bv = -1; for (const [k, v] of Object.entries(fam)) if (v > bv) { bv = v; best = k; } return best; }
 function fitText(c, text, w) {
   if (c.measureText(text).width <= w) return text;
@@ -1187,6 +1311,12 @@ function drawFlame() {
   const wrap = document.getElementById('flame-scroll');
   const W = Math.max(wrap.clientWidth - 2, 480);
   const root = fstate.root, zoom = fstate.zoom || root;
+  fstate.matches = findMatches();
+  const mv = sum(fstate.matches.map(n => n.v));
+  document.getElementById('f-match').textContent = fsearch && root.v ? `Matched ${fmt(100 * mv / root.v, mv && mv < root.v / 10 ? 1 : 0)}% · ${fmt(mv / IV)} of ${fmt(root.v / IV)} samples` : '';
+  const rm = fstate.removed.length, chip = document.getElementById('f-removed');
+  chip.hidden = !rm;
+  chip.innerHTML = rm ? `${rm} stack${rm === 1 ? '' : 's'} removed · <button type="button" class="link" id="f-undo">Undo</button>` : '';
   const top = zoom === root ? 0 : 1;
   let maxD = 0;
   (function md(n, d) {
@@ -1202,20 +1332,24 @@ function drawFlame() {
   fctx.font = `11px ${css('--f-cond')}`; fctx.textBaseline = 'middle';
   fstate.rects = [];
   if (!root.v) { fctx.fillStyle = COL.muted; fctx.fillText(`No ${requestLabel()} samples in this selection.`, 8, ROW); return; }
-  const hlHit = ch => fstate.hl != null && ch.some(n => n.id >= 0 && keyOf(nameOf(n.id)) === fstate.hl);
+  const font = `11px ${css('--f-cond')}`, bold = `600 ${font}`;
   const box = (ch, x, w, d) => {
     const first = ch[0], last = ch.at(-1);
     const y = d * ROW;
+    const synthetic = last.id === -1 || groupIds.has(last.id);
     const java = first.id < 0 || isJava(nameOf(last.id));
-    let alpha = java ? 0.45 : 0.22;
-    if (fstate.hl != null) alpha = hlHit(ch) ? 0.95 : 0.1;
-    fctx.globalAlpha = alpha; fctx.fillStyle = COL[dominant(first.fam)] || COL.other;
+    const hit = fsearch && ch.some(n => matchId(n.id));
+    // phase colours are faint, stronger for Java frames; matches and frame types are opaque
+    fctx.globalAlpha = hit || colorBy === 'ft' ? 1 : java ? 0.45 : 0.22;
+    fctx.fillStyle = hit ? COL.match : colorBy === 'phase' ? COL[dominant(first.fam)] || COL.other : synthetic ? COL.grid : COL['ft-' + ftype(nameOf(last.id))];
     fctx.fillRect(x + 0.5, y + 0.5, Math.max(0.5, w - 1), ROW - 1);
     fctx.globalAlpha = 1;
     if (w > 28) {
       const label = first.id === -1 ? `${scopeLabel(scope)} · ${requestLabel()} · ${fmt(first.v)} ms` : `${chainLabel(ch)} · ${fmt(first.v)} ms`;
+      fctx.font = hit ? bold : font;
       const t = fitText(fctx, label, w - 8);
-      if (t) { fctx.fillStyle = java ? COL.ink : COL['ink-2']; fctx.fillText(t, x + 4, y + ROW / 2 + 0.5); }
+      if (t) { fctx.fillStyle = hit || colorBy === 'ft' || java ? COL.ink : COL['ink-2']; fctx.fillText(t, x + 4, y + ROW / 2 + 0.5); }
+      fctx.font = font;
     }
     fstate.rects.push({ x, y, w, ch });
   };
@@ -1265,7 +1399,9 @@ flame.addEventListener('mousemove', ev => {
 flame.addEventListener('mouseleave', () => { tip.hidden = true; });
 flame.addEventListener('click', ev => {
   const q = flameHit(ev); if (!q) return;
-  fstate.zoom = q.back || q.ch[0].id === -1 ? null : q.ch[0];
+  if ((ev.ctrlKey || ev.altKey) && !q.back && q.ch[0].id !== -1) { tip.hidden = true; removeStack(q.ch[0]); return; }
+  const up = fstate.zoom && fstate.zoom.parent;
+  fstate.zoom = q.back ? (up && up !== fstate.root ? up : null) : q.ch[0].id === -1 ? null : q.ch[0];
   drawFlame();
 });
 
@@ -1293,17 +1429,21 @@ function topTable(samples) {
   let html = `<thead><tr><th>Method</th><th class="num" title="Samples with this method on top of the stack">Samples</th><th class="num sortable" data-sort="self"${topSort === 'self' ? ' aria-sort="descending"' : ''}>Self ms</th><th class="num">Self</th><th class="num sortable" data-sort="total"${topSort === 'total' ? ' aria-sort="descending"' : ''}>Total ms</th><th class="num">Total</th></tr></thead><tbody>`;
   for (const [k, sv, tv] of rows) {
     const sp = simple(k), pkg = k.endsWith(sp) ? k.slice(0, k.length - sp.length) : '';
-    html += `<tr data-k="${esc(k).replace(/"/g, '&quot;')}" aria-selected="${fstate.hl === k}" tabindex="0"><td class="m" title="${esc(k).replace(/"/g, '&quot;')}"><span class="pkg">${esc(pkg)}</span>${esc(sp)}</td>` +
+    html += `<tr data-k="${esc(k).replace(/"/g, '&quot;')}" aria-selected="${searchEl.value === methodPattern(k)}" tabindex="0"><td class="m" title="${esc(k).replace(/"/g, '&quot;')}"><span class="pkg">${esc(pkg)}</span>${esc(sp)}</td>` +
       `<td class="num">${sv ? fmt(sv / IV) : '·'}</td><td class="num">${sv ? fmt(sv) : '·'}</td><td class="num">${sv ? fmt(100 * sv / all, 1) + '%' : ''}</td><td class="num">${fmt(tv)}</td><td class="num">${fmt(100 * tv / all, 1)}%</td></tr>`;
   }
   if (!rows.length) html += `<tr><td colspan="6">No samples in this selection.</td></tr>`;
   t.innerHTML = html + '</tbody>';
   t.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => { topSort = th.dataset.sort; methodsChanged(false); }));
   t.querySelectorAll('tbody tr[data-k]').forEach(tr => {
-    const on = () => { const k = tr.dataset.k; fstate.hl = fstate.hl === k ? null : k; drawFlame(); t.querySelectorAll('tbody tr').forEach(r2 => r2.setAttribute('aria-selected', String(r2.dataset.k === fstate.hl))); };
+    const on = () => { const p = methodPattern(tr.dataset.k); setSearch(searchEl.value === p ? '' : p); };
     tr.addEventListener('click', on);
     tr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); on(); } });
   });
+}
+const methodPattern = k => '^' + reEsc(k) + '( ×\\d+)?$';
+function markMethodRow() {
+  document.querySelectorAll('#m-top tbody tr[data-k]').forEach(r => r.setAttribute('aria-selected', String(searchEl.value === methodPattern(r.dataset.k))));
 }
 function rocksPanel(samples) {
   const m = new Map(); let tot = 0;
@@ -1335,7 +1475,7 @@ function methodsChanged(rebuild) {
   document.getElementById('req-fcu').disabled = !b.fcuMs;
   if (!b.fcuMs && request === 'fcu') setRequest('np');
   const samples = selectedSamples(b);
-  if (rebuild || !fstate.root) { fstate.root = buildTree(samples); fstate.zoom = null; }
+  if (rebuild || !fstate.root) { fstate.root = buildTree(samples); fstate.zoom = null; fstate.removed = []; fstate.mi = null; }
   const rc = document.getElementById('m-range');
   rc.textContent = range ? `${fmt(range[0] - b.execStart)} to ${fmt(range[1] - b.execStart)} ms` : 'Whole window';
   document.getElementById('m-clear').hidden = !range;
@@ -1411,7 +1551,7 @@ function select(i) {
     `${b.hash} · ${fmt(b.tx)} tx · ${b.parallelPct >= 0 ? fmt(b.parallelPct, 1) + '% parallel' : ''} · ${fmt(b.gas / 1e6, 1)} Mgas · ${fmt(b.execMs, 1)} ms exec · ${fmt(b.mgas)} MGas/s`;
   const segs = b.segs.map(s => `${fmt(s[1] - s[0])} ms`).join(' + ');
   document.getElementById('d-axis-note').textContent = `Window ${segs}, ${PAD} ms padding, ${IV} ms per sample`;
-  range = null; fstate.hl = null; pinned = null;
+  range = null; pinned = null;
   document.getElementById('pinned').hidden = true;
   draw(); phaseTable(b); poolTable(b); procLine(b);
   fillScopes(b); methodsChanged(true);
@@ -1431,12 +1571,38 @@ document.getElementById('next').addEventListener('click', () => step(1));
 // fields that take typed text keep their keys
 const typing = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' ||
   el.tagName === 'INPUT' && !/^(checkbox|radio|button)$/.test(el.type) || el.getAttribute('role') === 'textbox');
+const helpBtn = document.getElementById('help-btn'), helpPop = document.getElementById('help-pop');
+function help(open) {
+  helpPop.hidden = !open;
+  helpBtn.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  // keep the popover on screen when the button sits near the left edge
+  helpPop.style.right = '0';
+  const r = helpPop.getBoundingClientRect();
+  if (r.left < 8) helpPop.style.right = (r.left - 8) + 'px';
+}
+helpBtn.addEventListener('click', () => help(helpPop.hidden));
+document.addEventListener('click', e => { if (!helpPop.hidden && !e.target.closest('.help-wrap')) help(false); });
+function closeAll() {
+  const any = !!searchEl.value || !helpPop.hidden || !!pinned;
+  if (searchEl.value) setSearch('');
+  if (!helpPop.hidden) help(false);
+  if (pinned) pin(null);
+  return any;
+}
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { if (pinned) { pin(null); e.preventDefault(); } return; }
-  if (e.altKey || e.ctrlKey || e.metaKey || typing(e.target)) return;
   const k = e.key;
+  if (k === 'Escape') { if (closeAll()) e.preventDefault(); return; }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && k.toLowerCase() === 'f') {
+    // a second Ctrl+F in the field opens the browser's own find
+    if (document.activeElement === searchEl) return;
+    e.preventDefault(); searchEl.focus(); searchEl.select(); return;
+  }
+  if (e.altKey || e.ctrlKey || e.metaKey || typing(e.target)) return;
   if (!e.shiftKey && (k === 'ArrowLeft' || k === 'k')) step(-1);
   else if (!e.shiftKey && (k === 'ArrowRight' || k === 'j')) step(1);
+  else if (k === 'n' || k === 'N') nextMatch(e.shiftKey ? -1 : 1);
+  else if (k === '0' && !e.shiftKey) { fstate.zoom = null; drawFlame(); }
   else return;
   e.preventDefault();
 });
@@ -1451,6 +1617,7 @@ new MutationObserver(recolor).observe(document.documentElement, { attributes: tr
 // notes
 document.getElementById('notes').innerHTML = D.meta.notes.map(n => `<p>${n}</p>`).join('');
 
+setColorBy('phase');
 // open the heaviest block first
 let heavy = 0; D.blocks.forEach((b, i) => { if (b.npMs > D.blocks[heavy].npMs) heavy = i; });
 select(heavy);
