@@ -395,7 +395,7 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
               <div class="pop" id="help-pop" role="dialog" aria-label="Help and hotkeys" hidden>
                 <dl class="keys">
                   <dt>Click</dt><dd>Zoom into frame</dd>
-                  <dt>Click top bar</dt><dd>Zoom out one level</dd>
+                  <dt>Click top bar</dt><dd>Zoom out to the whole graph</dd>
                   <dt>0</dt><dd>Reset zoom</dd>
                   <dt>Ctrl/Alt+Click</dt><dd>Remove stack</dd>
                   <dt>Ctrl+F</dt><dd>Search</dd>
@@ -1461,8 +1461,7 @@ flame.addEventListener('mouseleave', () => { tip.hidden = true; });
 flame.addEventListener('click', ev => {
   const q = flameHit(ev); if (!q) return;
   if ((ev.ctrlKey || ev.altKey) && !q.back && q.ch[0].id !== -1) { tip.hidden = true; removeStack(q.ch[0]); return; }
-  const up = fstate.zoom && fstate.zoom.parent;
-  fstate.zoom = q.back ? (up && up !== fstate.root ? up : null) : q.ch[0].id === -1 ? null : q.ch[0];
+  fstate.zoom = q.back || q.ch[0].id === -1 ? null : q.ch[0];
   drawFlame();
 });
 
