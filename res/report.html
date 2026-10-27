@@ -36,6 +36,9 @@
   --wait: rgba(20, 23, 27, 0.10);
   --io-read: #14171b;
   --io-write: #b7bec7;
+  --io-other: #6b727c;
+  --blocked: #b0b6be;
+  --match: #ee00ee;
   --sel: rgba(20, 23, 27, 0.07);
   --c-stateRoot: #2a78d6;
   --c-mainExec: #eb6834;
@@ -44,7 +47,7 @@
   --c-persist: #e87ba4;
   --c-validate: #008300;
   --c-fcu: #6250d6;
-  --c-gc: #e34948;
+  --c-gc: #a8322f;
   --c-other: #b4bac2;
   --f-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "DejaVu Sans", sans-serif;
   --f-cond: "IBM Plex Sans Condensed", "Roboto Condensed", "Arial Narrow", "DejaVu Sans Condensed", system-ui, sans-serif;
@@ -69,6 +72,9 @@
     --wait: rgba(255, 255, 255, 0.10);
     --io-read: #edf0f3;
     --io-write: #59606a;
+    --io-other: #9aa1ab;
+    --blocked: #5d646e;
+    --match: #d23bd2;
     --sel: rgba(255, 255, 255, 0.09);
     --c-stateRoot: #3987e5;
     --c-mainExec: #d95926;
@@ -77,7 +83,7 @@
     --c-persist: #d55181;
     --c-validate: #008300;
     --c-fcu: #9085e9;
-    --c-gc: #e66767;
+    --c-gc: #f29b9b;
     --c-other: #4b525b;
   }
 }
@@ -94,6 +100,9 @@
   --wait: rgba(255, 255, 255, 0.10);
   --io-read: #edf0f3;
   --io-write: #59606a;
+  --io-other: #9aa1ab;
+  --blocked: #5d646e;
+  --match: #d23bd2;
   --sel: rgba(255, 255, 255, 0.09);
   --c-stateRoot: #3987e5;
   --c-mainExec: #d95926;
@@ -102,7 +111,7 @@
   --c-persist: #d55181;
   --c-validate: #008300;
   --c-fcu: #9085e9;
-  --c-gc: #e66767;
+  --c-gc: #f29b9b;
   --c-other: #4b525b;
 }
 
@@ -141,12 +150,17 @@ header { display: grid; gap: 10px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--s-sm); color: var(--ink-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; flex: none; }
-.sw.io { background: var(--io-read); height: 4px; }
-.sw.iow { background: var(--io-write); height: 4px; }
-.sw.iocpu { background: var(--muted); height: 4px; }
-.sw.blocked { background: var(--muted); opacity: 0.45; height: 6px; }
-.sw.disk { background: var(--ink); height: 6px; }
-.sw.sel { background: var(--sel); outline: 1px solid var(--ink); }
+.lgrid { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 6px 12px; align-items: baseline; }
+.lgrid .label { line-height: 20px; }
+@media (max-width: 700px) { .lgrid { grid-template-columns: minmax(0, 1fr); gap: 2px; } .lgrid .legend { margin-bottom: 8px; } }
+.mk { display: inline-flex; align-items: flex-end; justify-content: center; width: 16px; height: 12px; flex: none; }
+.mk i { display: block; }
+.mk-read { background: var(--io-read); }
+.mk-other { background: var(--io-other); }
+.mk-write { background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--ink); }
+.mk-wait { background: var(--wait); }
+.mk-blocked { background: var(--blocked); }
+.mk-disk { background: var(--ink); }
 .tl-inner { position: relative; }
 #tl-ov { position: absolute; left: 0; top: 0; pointer-events: none; }
 .methods { display: grid; gap: 12px; border-top: 1px solid var(--grid); padding-top: 14px; }
@@ -175,7 +189,6 @@ header { display: grid; gap: 10px; }
 .rocks .bar.file { background: var(--ink); }
 .rocks .bar.write { background: var(--io-write); }
 .rocks .n { font-family: var(--f-mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2); }
-.sw.wait { background: var(--wait); outline: 1px solid var(--hair); }
 
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: var(--s-sm); }
@@ -274,7 +287,7 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
         <label><input type="checkbox" id="opt-idle"> Idle samples inside a phase</label>
         <span class="sub" id="d-axis-note"></span>
       </div>
-      <div class="legend" id="legend-tl"></div>
+      <div class="lgrid" id="legend-tl"></div>
       <div class="tl-wrap tl-scroll" id="tl-scroll">
         <div class="tl-inner">
           <canvas id="tl" aria-label="Thread timeline of the selected block"></canvas>
@@ -395,7 +408,7 @@ let COL = {};
 function readColors() {
   COL = {};
   for (const [k] of FAMILIES) COL[k] = css('--c-' + k);
-  for (const k of ['ink', 'ink-2', 'muted', 'grid', 'axis', 'surface', 'bg', 'wait', 'io-read', 'io-write', 'hair']) COL[k] = css('--' + k);
+  for (const k of ['ink', 'ink-2', 'muted', 'grid', 'axis', 'surface', 'bg', 'wait', 'io-read', 'io-write', 'io-other', 'blocked', 'match', 'hair']) COL[k] = css('--' + k);
 }
 readColors();
 
@@ -525,22 +538,19 @@ for (const [k, v] of [['build', D.meta.build], ['capture (UTC)', D.meta.capture]
   const s = document.createElement('span'); s.innerHTML = `${k} <b></b>`; s.querySelector('b').textContent = v; meta.append(s);
 }
 
-function legend(el, withIo) {
-  el.innerHTML = '';
-  for (const [k, l] of FAMILIES) {
-    const s = document.createElement('span');
-    s.innerHTML = `<i class="sw" style="background:var(--c-${k})"></i>`;
-    s.append(l); el.append(s);
-  }
-  if (withIo) {
-    const extra = HAS_PROC ? [['blocked', 'Engine thread blocked (off CPU)'], ['disk', 'Engine thread reading from disk']] : [];
-    for (const [cls, l] of [['io', 'RocksDB reading a file (pread)'], ['iocpu', 'RocksDB, other read work'], ['iow', 'RocksDB write'], ['wait', 'Engine thread parked or in a syscall'], ...extra, ['sel', 'Selected time range']]) {
-      const s = document.createElement('span'); s.innerHTML = `<i class="sw ${cls}"></i>`; s.append(l); el.append(s);
-    }
-  }
-}
-legend(document.getElementById('legend-top'), false);
-legend(document.getElementById('legend-tl'), true);
+const phaseLegend = () => FAMILIES.map(([k, l]) => `<span><i class="sw" style="background:var(--c-${k})"></i>${esc(l)}</span>`).join('');
+document.getElementById('legend-top').innerHTML = phaseLegend();
+// each mark in the shape it has under the engine lane: [width, height, class, label]
+const MARKS = [
+  [16, 4, 'mk-read', 'RocksDB reading a file (pread)'], [16, 4, 'mk-other', 'RocksDB, other read work'],
+  [16, 5, 'mk-write', 'RocksDB write'], [16, 12, 'mk-wait', 'Parked or in a syscall'],
+  ...(HAS_PROC ? [[6, 9, 'mk-blocked', `Off CPU, share of the ${IV} ms`], [6, 12, 'mk-disk', 'Read from disk']] : []),
+];
+document.getElementById('legend-tl').innerHTML =
+  `<span class="label">Slice colour = phase</span><div class="legend">${phaseLegend()}</div>` +
+  `<span class="label">Marks under the engine lane</span><div class="legend">${MARKS.map(([w, hh, c, l]) =>
+    `<span><span class="mk"><i class="${c}" style="width:${w}px;height:${hh}px"></i></span>${esc(l)}</span>`).join('')}</div>` +
+  `<span class="label">Mouse</span><div class="legend">Drag to pick a time range · click a slice to pin its stack below · click a lane name to scope “Where the time went”</div>`;
 
 // ---------- block table ----------
 const FAM_ORDER = FAMILIES.map(f => f[0]);
@@ -775,9 +785,8 @@ function draw() {
       }
       ctx.fillStyle = COL[fam]; ctx.fillRect(x, l.y, w, rowH);
       if (act === 1 || act === 2) {
-        ctx.fillStyle = act === 2 ? COL['io-write'] : (s[6] === 1 || s[6] === 11 || s[6] == null) ? COL['io-read'] : COL.muted;
-        if (engine) ctx.fillRect(x, l.y + rowH + 2, w, 8);
-        else ctx.fillRect(x, l.y + rowH - 3, w, 3);
+        if (engine) ioMark(s, x, l.y + rowH + 2, w, 8);
+        else ioMark(s, x, l.y + rowH - 3, w, 3);
       }
     }
     if (engine) {
@@ -794,7 +803,7 @@ function draw() {
             const x0 = ax.x(a), x1 = ax.x(a + IV); if (x0 == null || x1 == null) continue;
             const w = Math.max(1, x1 - x0 - 0.5);
             const off = p.blocked / IV;
-            if (off > 0.05) { const hh = Math.max(1, 7 * Math.min(1, off)); ctx.fillStyle = COL.muted; ctx.fillRect(x0, l.y + 39 - hh, w, hh); }
+            if (off > 0.05) { const hh = Math.max(1, 7 * Math.min(1, off)); ctx.fillStyle = COL.blocked; ctx.fillRect(x0, l.y + 39 - hh, w, hh); }
             if (p.disk > 0) { const hh = Math.max(2, 7 * Math.min(1, Math.log2(1 + p.disk / 4096) / 6)); ctx.fillStyle = COL.ink; ctx.fillRect(x0, l.y + 48 - hh, w, hh); }
           }
         }
@@ -803,6 +812,17 @@ function draw() {
   }
   layout = { lanes, ax, b, width, height };
   drawOverlay();
+}
+// RocksDB mark of a sample: file reads in ink, other read work lighter, writes outlined
+function ioMark(s, x, y, w, h) {
+  if (s[3] === 2) {
+    const lw = h > 4 ? 1.5 : 1;
+    ctx.fillStyle = COL.surface; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = COL.ink; ctx.lineWidth = lw; ctx.strokeRect(x + lw / 2, y + lw / 2, Math.max(0, w - lw), h - lw);
+  } else {
+    ctx.fillStyle = s[6] === 1 || s[6] === 11 || s[6] == null ? COL['io-read'] : COL['io-other'];
+    ctx.fillRect(x, y, w, h);
+  }
 }
 function buckets(b, l) {
   if (l._b && l._b.blk === b) return l._b.map;
