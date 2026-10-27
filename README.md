@@ -42,6 +42,7 @@ On the machine running Besu:
    ```
    scp <node>:besu-blockprof-*.html .
    ```
+   In the report, the `?` button next to the flame graph controls lists the hotkeys, such as ← / → for the previous and next block.
 
 The profiler runs inside the live Besu JVM; read the note on `--cstack` [below](#record) before using it on a node that matters. `./besu-blockprof --help` lists every option.
 
