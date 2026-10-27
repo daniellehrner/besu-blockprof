@@ -217,7 +217,7 @@ button.icon { width: 32px; height: 32px; padding: 0; font-weight: 600; }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
 .seg button .mono { font-size: var(--s-xs); opacity: 0.8; }
 .seg button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
-.rocks { display: grid; grid-template-columns: max-content minmax(80px, 1fr) max-content max-content; gap: 3px 10px; align-items: center; font-size: var(--s-sm); }
+.rocks { display: grid; grid-template-columns: minmax(0, max-content) minmax(60px, 1fr) max-content max-content; gap: 3px 10px; align-items: center; font-size: var(--s-sm); }
 .rocks .bar { height: 10px; background: var(--ink-2); border-radius: 0 2px 2px 0; min-width: 1px; }
 .rocks .bar.file { background: var(--ink); }
 .rocks .bar.write { background: var(--io-write); }
