@@ -40,27 +40,44 @@ public final class BesuBlockProf {
 
   static final String USAGE =
       """
-      usage:
-        besu-blockprof record [--log PATH]... [--out FILE] [--archive] [--pid N] [--pad MS] [--asprof PATH]
-                              [--proc-threads PREFIX,...|none] [--proc-interval-us N] [-- <asprof args>]
-        besu-blockprof report --jfr FILE [--log FILE]... [--proc FILE] [--out FILE] [--pad MS]
-                              [--event auto|wall|cpu] [--interval MS]
+      usage: besu-blockprof record [options] [-- <asprof args>]
+             besu-blockprof report --jfr FILE [options]
 
-      record  profiles the running Besu with asprof and writes the report to --out (default
-              besu-blockprof-<UTC time>.html in the current directory). Run it with sudo or as the
-              user of the Besu JVM. The pid defaults to the one process running
-              org.hyperledger.besu.Besu. --log is the file or directory Besu writes its INFO log to
-              (default /var/log/besu; in a directory, its *.log files). asprof arguments after --
-              replace the defaults -d 120 -i 5ms -e wall --cstack vm one by one. --archive also keeps
-              the JFR, the log lines, the I/O counters and the run's properties next to the report.
-              While asprof runs, the per-thread I/O and scheduler counters of the threads whose names
-              start with --proc-threads (default engine-ordered-, the engine API thread) are read every
-              --proc-interval-us (default 1000), so the report can tell disk reads from page-cache hits.
-              example:
-                sudo besu-blockprof record
+      record  profiles the running Besu with async-profiler and writes an HTML report with one
+              timeline per imported block. Run it with sudo or as the user of the Besu JVM.
+              Ctrl-C stops the capture without a report.
 
-      report  builds the HTML from a JFR and the besu log lines that cover it. Next to a JFR from
-              record --archive, the .log, .proc.csv and .properties files are picked up automatically.
+        --out FILE              the report; default besu-blockprof-<UTC time>.html in the current
+                                directory, or in FILE if it is a directory
+        --archive               also keep the JFR, the log lines, the I/O counters and the run's
+                                properties next to the report, so report can rebuild it
+        --log PATH              the file or directory Besu writes its INFO log to, repeatable; in a
+                                directory, its *.log and *.log.N files; default /var/log/besu
+        --pid N                 the Besu JVM; default the one process running org.hyperledger.besu.Besu
+        --asprof PATH           default asprof on PATH, else the newest /opt/async-profiler*/bin/asprof
+                                or ~/opt/async-profiler*/bin/asprof
+        --proc-threads P,...    threads whose I/O and scheduler counters are read, by name prefix, or
+                                none; default engine-ordered-, the engine API thread. The counters
+                                tell disk reads from page-cache hits
+        --proc-interval-us N    how often to read them; default 1000
+        --pad MS                padding around each newPayload and FCU window; default 50
+        -- <asprof args>        replace the defaults -d 300 -i 5ms -e wall --cstack vm one by one,
+                                e.g. -- -d 60 profiles for one minute
+
+      report  rebuilds the HTML from a JFR, e.g. one kept by record --archive. The .log, .proc.csv
+              and .properties files next to it are picked up automatically.
+
+        --jfr FILE              the capture
+        --out FILE              the report; default the JFR's name with .html
+        --log FILE              the Besu log lines that cover the capture, repeatable; needed when
+                                there is no .log next to the JFR
+        --proc FILE             the I/O counters; default the .proc.csv next to the JFR
+        --pad MS                padding around each newPayload and FCU window; default 50
+        --event auto|wall|cpu   which sample event to use when the JFR has both; default auto
+        --interval MS           the sample interval, if it can't be inferred from the samples
+
+      example:
+        sudo besu-blockprof record
       """;
 
   static final class UsageException extends RuntimeException {
@@ -73,7 +90,10 @@ public final class BesuBlockProf {
 
   public static void main(String[] args) {
     try {
-      if (args.length == 0 || args[0].equals("-h") || args[0].equals("--help")) {
+      // after --, the arguments belong to asprof
+      List<String> all = List.of(args);
+      List<String> own = all.contains("--") ? all.subList(0, all.indexOf("--")) : all;
+      if (all.isEmpty() || own.contains("-h") || own.contains("--help")) {
         System.out.print(USAGE);
         return;
       }
@@ -84,8 +104,7 @@ public final class BesuBlockProf {
         default -> throw new UsageException("unknown command " + args[0]);
       }
     } catch (UsageException e) {
-      System.err.println("besu-blockprof: " + e.getMessage());
-      System.err.print(USAGE);
+      System.err.println("besu-blockprof: " + e.getMessage() + "; see besu-blockprof --help");
       System.exit(2);
     } catch (Exception e) {
       System.err.println("besu-blockprof: " + e.getMessage());
@@ -102,7 +121,7 @@ public final class BesuBlockProf {
   static final Path DEFAULT_LOG = Path.of("/var/log/besu");
 
   static final List<List<String>> DEFAULT_ASPROF_ARGS =
-      List.of(List.of("-d", "120"), List.of("-i", "5ms"), List.of("-e", "wall"), List.of("--cstack", "vm"));
+      List.of(List.of("-d", "300"), List.of("-i", "5ms"), List.of("-e", "wall"), List.of("--cstack", "vm"));
 
   static final List<String> CAPTURE_FILES = List.of(".jfr", ".log", ".proc.csv", ".properties");
 

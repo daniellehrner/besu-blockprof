@@ -18,6 +18,8 @@ chmod +x besu-blockprof
 sudo ./besu-blockprof record
 ```
 
+`./besu-blockprof --help` lists every option.
+
 Recording also needs [async-profiler](https://github.com/async-profiler/async-profiler/releases) on the machine running Besu, in a directory the Besu user can read: the JVM loads its library from there.
 
 The release also has `besu-blockprof.jar` for `java -jar besu-blockprof.jar`, which takes the same commands and options.
@@ -38,10 +40,10 @@ Run it with sudo or as the user of the Besu JVM. As root, asprof attaches with t
 
 Besu has to write its INFO log to a file, because the block windows come from its `Imported #` and `FCU(VALID)` lines. `--log` defaults to `/var/log/besu`.
 
-Everything after `--` goes to asprof and replaces the defaults `-d 120 -i 5ms -e wall --cstack vm` one by one, so this profiles for five minutes instead of two:
+Everything after `--` goes to asprof and replaces the defaults `-d 300 -i 5ms -e wall --cstack vm` one by one, so this profiles for one minute instead of five:
 
 ```
-sudo besu-blockprof record -- -d 300
+sudo besu-blockprof record -- -d 60
 ```
 
 With `--archive`, `record` also keeps the files the report was built from next to it, under the report's name:
@@ -67,7 +69,7 @@ Options:
 Ctrl-C stops the capture without a report.
 
 async-profiler arguments that matter for the report:
-- `-d 120`: how many seconds to profile.
+- `-d 300`: how many seconds to profile.
 - `-e wall`: every thread, including parked ones. `-e cpu` works too, but only shows time on CPU.
 - `-i 5ms` or smaller: a newPayload of 50 ms gets 10 samples per thread at 5 ms.
 - `--cstack vm`: keeps native frames, which the RocksDB split needs. Stack walking can crash a JVM that runs Go code through cgo, as Besu does for some precompiles, with the default cstack mode and occasionally with `--cstack vm` too. Keep captures short on nodes that matter.
