@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Copyright besu-blockprof contributors.
-# SPDX-License-Identifier: Apache-2.0
-exec java -jar "$(dirname "$(readlink -f "$0")")/besu-blockprof.jar" "$@"

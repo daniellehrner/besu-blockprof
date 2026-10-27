@@ -65,7 +65,7 @@ final class ProcSampler implements Runnable {
     if (read(tids.get(0)[0]) == null) {
       throw new IOException(
           "cannot read /proc/" + pid + "/task/" + tids.get(0)[0]
-              + "/io; run as the user of the Besu JVM");
+              + "/io; run with sudo or as the user of the Besu JVM");
     }
     return tids;
   }

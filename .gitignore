@@ -7,3 +7,4 @@ build/
 *.properties
 runs/
 *.proc.csv
+/besu-blockprof

@@ -22,13 +22,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /** Records an async-profiler capture of a running Besu and turns it into a per-block HTML report. */
@@ -37,23 +41,26 @@ public final class BesuBlockProf {
   static final String USAGE =
       """
       usage:
-        besu-blockprof record --log FILE... [--pid N] [--out DIR] [--pad MS] [--asprof PATH]
-                              [--proc-threads PREFIX,...|none] [--proc-interval-us N] -- <asprof args>
+        besu-blockprof record [--log PATH]... [--out FILE] [--archive] [--pid N] [--pad MS] [--asprof PATH]
+                              [--proc-threads PREFIX,...|none] [--proc-interval-us N] [-- <asprof args>]
         besu-blockprof report --jfr FILE [--log FILE]... [--proc FILE] [--out FILE] [--pad MS]
                               [--event auto|wall|cpu] [--interval MS]
 
-      record  runs asprof with the given arguments against Besu, writing JFR, then writes the report.
-              --log is the file Besu writes its INFO log to (repeat it for rotated files). The pid
-              defaults to the one process running org.hyperledger.besu.Besu. asprof must run as the
-              user of the Besu JVM, and that user writes the files, so pick an --out it can write to.
+      record  profiles the running Besu with asprof and writes the report to --out (default
+              besu-blockprof-<UTC time>.html in the current directory). Run it with sudo or as the
+              user of the Besu JVM. The pid defaults to the one process running
+              org.hyperledger.besu.Besu. --log is the file or directory Besu writes its INFO log to
+              (default /var/log/besu; in a directory, its *.log files). asprof arguments after --
+              replace the defaults -d 120 -i 5ms -e wall --cstack vm one by one. --archive also keeps
+              the JFR, the log lines, the I/O counters and the run's properties next to the report.
               While asprof runs, the per-thread I/O and scheduler counters of the threads whose names
               start with --proc-threads (default engine-ordered-, the engine API thread) are read every
               --proc-interval-us (default 1000), so the report can tell disk reads from page-cache hits.
               example:
-                sudo -u <besu user> besu-blockprof record --log <besu log> --out /tmp/besu-blockprof -- -d 300 -i 5ms -e wall --cstack vm
+                sudo besu-blockprof record
 
       report  builds the HTML from a JFR and the besu log lines that cover it. Next to a JFR from
-              record, the .log and .properties files it wrote are picked up automatically.
+              record --archive, the .log, .proc.csv and .properties files are picked up automatically.
       """;
 
   static final class UsageException extends RuntimeException {
@@ -92,25 +99,34 @@ public final class BesuBlockProf {
   static final Set<String> OTHER_ACTIONS =
       Set.of("start", "resume", "stop", "dump", "check", "status", "meminfo", "list", "version");
 
+  static final Path DEFAULT_LOG = Path.of("/var/log/besu");
+
+  static final List<List<String>> DEFAULT_ASPROF_ARGS =
+      List.of(List.of("-d", "120"), List.of("-i", "5ms"), List.of("-e", "wall"), List.of("--cstack", "vm"));
+
+  static final List<String> CAPTURE_FILES = List.of(".jfr", ".log", ".proc.csv", ".properties");
+
   static void record(List<String> args) throws Exception {
     String pid = null;
     List<Path> logs = new ArrayList<>();
-    Path outDir = Path.of(".");
+    Path out = null;
+    boolean archive = false;
     long pad = 50;
     String asprof = null;
     List<String> procThreads = List.of("engine-ordered-");
     long procIntervalUs = 1000;
-    List<String> ap = null;
+    List<String> ap = new ArrayList<>();
     for (int i = 0; i < args.size(); i++) {
       String a = args.get(i);
       if (a.equals("--")) {
-        ap = new ArrayList<>(args.subList(i + 1, args.size()));
+        ap.addAll(args.subList(i + 1, args.size()));
         break;
       }
       switch (a) {
         case "--pid" -> pid = value(args, ++i, a);
         case "--log" -> logs.add(Path.of(value(args, ++i, a)));
-        case "--out" -> outDir = Path.of(value(args, ++i, a));
+        case "--out" -> out = Path.of(value(args, ++i, a));
+        case "--archive" -> archive = true;
         case "--pad" -> pad = Long.parseLong(value(args, ++i, a));
         case "--asprof" -> asprof = value(args, ++i, a);
         case "--proc-threads" -> {
@@ -121,10 +137,6 @@ public final class BesuBlockProf {
         default -> throw new UsageException("unknown option " + a + " (asprof arguments go after --)");
       }
     }
-    if (ap == null || ap.isEmpty()) {
-      throw new UsageException(
-          "no asprof arguments; put them after --, e.g. -- -d 300 -i 5ms -e wall --cstack vm");
-    }
     for (String t : ap) {
       if (OTHER_ACTIONS.contains(t)) {
         throw new UsageException("asprof action " + t + " is not supported; record runs a timed collect (-d N)");
@@ -134,41 +146,57 @@ public final class BesuBlockProf {
     if (o >= 0 && (o + 1 >= ap.size() || !ap.get(o + 1).equals("jfr"))) {
       throw new UsageException("the report needs JFR output; drop -o or use -o jfr");
     }
+    if (ap.contains("-f")) {
+      throw new UsageException("-f is not supported; --out names the report and --archive keeps the JFR next to it");
+    }
     // a trailing number that is not an option's value is asprof's pid
-    String last = ap.get(ap.size() - 1);
-    if (last.matches("\\d+") && (ap.size() == 1 || !ap.get(ap.size() - 2).startsWith("-"))) {
-      if (pid != null && !pid.equals(last)) throw new UsageException("pid given twice: " + pid + " and " + last);
-      pid = last;
-      ap.remove(ap.size() - 1);
+    if (!ap.isEmpty()) {
+      String last = ap.get(ap.size() - 1);
+      if (last.matches("\\d+") && (ap.size() == 1 || !ap.get(ap.size() - 2).startsWith("-"))) {
+        if (pid != null && !pid.equals(last)) throw new UsageException("pid given twice: " + pid + " and " + last);
+        pid = last;
+        ap.remove(ap.size() - 1);
+      }
     }
-    if (!ap.contains("-d")) {
-      System.err.println("besu-blockprof: no -d given, asprof collects for its default 60 s");
+    for (List<String> d : DEFAULT_ASPROF_ARGS) {
+      if (!ap.contains(d.get(0))) ap.addAll(d);
     }
+    String userArgs = String.join(" ", ap);
 
-    if (logs.isEmpty()) throw new UsageException("--log is required: the file Besu writes its INFO log to");
-    for (Path l : logs) if (!Files.isReadable(l)) throw new IllegalStateException("cannot read log " + l);
+    if (logs.isEmpty()) logs.add(DEFAULT_LOG);
+    for (Path l : logs) {
+      if (!Files.isReadable(l) || Files.isDirectory(l) && logFiles(l, 0).isEmpty()) {
+        throw new IllegalStateException(
+            "no readable Besu log at " + l + "; pass --log with the file or directory Besu writes its INFO log to");
+      }
+    }
     if (pid == null) pid = findBesuPid();
+    Path proc = Path.of("/proc", pid);
+    int jvmUid = uid(proc);
+    int selfUid = uid(Path.of("/proc/self"));
+    if (selfUid != 0 && selfUid != jvmUid) {
+      throw new IllegalStateException(
+          "Besu runs as " + Files.getOwner(proc).getName() + "; run besu-blockprof with sudo or as that user");
+    }
     String asprofPath = findAsprof(asprof);
 
-    // the agent inside the target JVM writes the file, so its path must not depend on our cwd
-    Path jfr;
-    int f = ap.indexOf("-f");
-    if (f >= 0) {
-      if (f + 1 >= ap.size() || !ap.get(f + 1).endsWith(".jfr")) {
-        throw new UsageException("-f must name a .jfr file");
-      }
-      jfr = Path.of(ap.get(f + 1)).toAbsolutePath();
-      ap.set(f + 1, jfr.toString());
-    } else {
-      Files.createDirectories(outDir);
-      String stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC).format(Instant.now());
-      jfr = outDir.resolve("besu-blockprof-" + stamp + ".jfr").toAbsolutePath();
-      ap.add("-f");
-      ap.add(jfr.toString());
-    }
-    Files.createDirectories(jfr.getParent());
-    String base = stripJfr(jfr);
-    String userArgs = String.join(" ", ap.subList(0, f >= 0 ? ap.size() : ap.size() - 2));
+    String stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC).format(Instant.now());
+    String name = "besu-blockprof-" + stamp + ".html";
+    if (out == null) out = Path.of(name);
+    else if (Files.isDirectory(out)) out = out.resolve(name);
+    out = out.toAbsolutePath();
+    Files.createDirectories(out.getParent());
+    if (!Files.isWritable(out.getParent())) throw new IllegalStateException("cannot write to " + out.getParent());
+
+    // The agent inside the JVM writes the JFR as the JVM's user and into the JVM's own /tmp, which
+    // systemd's PrivateTmp or a container can hide from us; /proc/<pid>/root shows it.
+    Path scratch = Files.createTempDirectory(proc.resolve("root/tmp"), "besu-blockprof-");
+    AtomicReference<Process> asprofProcess = new AtomicReference<>();
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> cleanUp(asprofProcess.get(), scratch)));
+    if (selfUid != jvmUid) Files.setAttribute(scratch, "unix:uid", jvmUid);
+    Path jfr = scratch.resolve("capture.jfr");
+    ap.add("-f");
+    ap.add("/tmp/" + scratch.getFileName() + "/capture.jfr");
 
     List<String> cmd = new ArrayList<>();
     cmd.add(asprofPath);
@@ -176,7 +204,7 @@ public final class BesuBlockProf {
     cmd.add(pid);
     ProcSampler sampler = null;
     Thread samplerThread = null;
-    Path procFile = Path.of(base + ".proc.csv");
+    Path procFile = scratch.resolve("capture.proc.csv");
     if (!procThreads.isEmpty()) {
       sampler = new ProcSampler(pid, procThreads, procIntervalUs * 1000, procFile);
       try {
@@ -196,7 +224,8 @@ public final class BesuBlockProf {
 
     System.err.println("besu-blockprof: " + String.join(" ", cmd));
     Instant start = Instant.now();
-    int rc = new ProcessBuilder(cmd).inheritIO().start().waitFor();
+    asprofProcess.set(new ProcessBuilder(cmd).inheritIO().start());
+    int rc = asprofProcess.get().waitFor();
     Instant end = Instant.now();
     if (sampler != null) {
       sampler.stop();
@@ -205,7 +234,7 @@ public final class BesuBlockProf {
         System.err.println("besu-blockprof: warning: I/O counter sampling stopped: " + sampler.error());
       }
     }
-    boolean alive = Files.exists(Path.of("/proc", pid));
+    boolean alive = Files.exists(proc);
     if (!alive) {
       System.err.println("besu-blockprof: warning: pid " + pid + " is gone, the JVM died during the capture");
     }
@@ -213,20 +242,22 @@ public final class BesuBlockProf {
     if (!Files.exists(jfr) || Files.size(jfr) == 0) throw new IllegalStateException("asprof wrote no JFR at " + jfr);
 
     // keep only the log lines the report needs, so the capture can be re-reported elsewhere
-    Path slice = Path.of(base + ".log");
+    Path slice = scratch.resolve("capture.log");
     long from = start.toEpochMilli() - 60_000, to = end.toEpochMilli() + 60_000;
     int kept = 0;
     try (BufferedWriter w = Files.newBufferedWriter(slice, StandardCharsets.UTF_8)) {
       for (Path l : logs) {
-        try (Stream<String> lines = Files.lines(l, StandardCharsets.UTF_8)) {
-          for (String line : (Iterable<String>) lines::iterator) {
-            if (!line.contains("Imported #") && !line.contains("FCU(")) continue;
-            String clean = Converter.stripAnsi(line);
-            long t = Converter.lineTime(clean);
-            if (t >= from && t <= to) {
-              w.write(clean);
-              w.newLine();
-              kept++;
+        for (Path file : Files.isDirectory(l) ? logFiles(l, from) : List.of(l)) {
+          try (Stream<String> lines = Files.lines(file, StandardCharsets.UTF_8)) {
+            for (String line : (Iterable<String>) lines::iterator) {
+              if (!line.contains("Imported #") && !line.contains("FCU(")) continue;
+              String clean = Converter.stripAnsi(line);
+              long t = Converter.lineTime(clean);
+              if (t >= from && t <= to) {
+                w.write(clean);
+                w.newLine();
+                kept++;
+              }
             }
           }
         }
@@ -244,13 +275,25 @@ public final class BesuBlockProf {
     p.setProperty("host", hostName());
     p.setProperty("start", start.toString());
     p.setProperty("end", end.toString());
-    try (Writer w = Files.newBufferedWriter(Path.of(base + ".properties"), StandardCharsets.UTF_8)) {
+    try (Writer w = Files.newBufferedWriter(scratch.resolve("capture.properties"), StandardCharsets.UTF_8)) {
       p.store(w, "besu-blockprof record");
     }
 
-    writeReport(
-        jfr, List.of(slice), sampler != null ? procFile : null, Path.of(base + ".html"), pad, "auto",
-        null, p);
+    writeReport(jfr, List.of(slice), sampler != null ? procFile : null, out, pad, "auto", null, p);
+    handOver(out, selfUid);
+    if (archive) {
+      // the names report looks for next to a JFR
+      String s = out.toString();
+      String base = s.endsWith(".html") ? s.substring(0, s.length() - 5) : s;
+      for (String ext : CAPTURE_FILES) {
+        Path f = scratch.resolve("capture" + ext);
+        if (!Files.exists(f)) continue;
+        Path dest = Path.of(base + ext);
+        Files.move(f, dest, StandardCopyOption.REPLACE_EXISTING);
+        handOver(dest, selfUid);
+        System.err.println("  kept " + dest);
+      }
+    }
   }
 
   // ---------- report ----------
@@ -324,6 +367,62 @@ public final class BesuBlockProf {
     return s.endsWith(".jfr") ? s.substring(0, s.length() - 4) : s;
   }
 
+  /** The current and rotated plain-text logs in a log directory, oldest first. */
+  static List<Path> logFiles(Path dir, long modifiedSince) throws IOException {
+    List<Path> files = new ArrayList<>();
+    try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
+      for (Path f : ds) {
+        // a file last written before the capture cannot hold its lines
+        if (f.getFileName().toString().matches(".*\\.log(\\.\\d+)?")
+            && Files.isRegularFile(f)
+            && lastModified(f) >= modifiedSince) {
+          files.add(f);
+        }
+      }
+    }
+    // the report pairs each import with the FCU lines after it, so the lines must stay in order
+    files.sort(Comparator.comparingLong(BesuBlockProf::lastModified));
+    return files;
+  }
+
+  static long lastModified(Path f) {
+    try {
+      return Files.getLastModifiedTime(f).toMillis();
+    } catch (IOException e) {
+      return 0;
+    }
+  }
+
+  static int uid(Path p) throws IOException {
+    return (Integer) Files.getAttribute(p, "unix:uid");
+  }
+
+  // under sudo, the files go to whoever ran it, so they can copy them off without sudo
+  static void handOver(Path p, int selfUid) throws IOException {
+    String uid = System.getenv("SUDO_UID"), gid = System.getenv("SUDO_GID");
+    if (selfUid != 0 || uid == null || gid == null) return;
+    Files.setAttribute(p, "unix:uid", Integer.parseInt(uid));
+    Files.setAttribute(p, "unix:gid", Integer.parseInt(gid));
+  }
+
+  // On Ctrl-C asprof gets the SIGINT too and stops the profiler inside Besu; wait for that before
+  // removing the directory the JFR goes to, and stop it ourselves if only this JVM was told to exit.
+  static void cleanUp(Process asprof, Path scratch) {
+    try {
+      if (asprof != null && asprof.isAlive()) {
+        new ProcessBuilder("kill", "-INT", String.valueOf(asprof.pid())).start().waitFor();
+        asprof.waitFor(30, TimeUnit.SECONDS);
+      }
+    } catch (IOException | InterruptedException e) {
+      // nothing left to try while the JVM exits
+    }
+    try (Stream<Path> files = Files.walk(scratch)) {
+      for (Path f : files.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(f);
+    } catch (IOException e) {
+      System.err.println("besu-blockprof: warning: could not remove " + scratch + ": " + e.getMessage());
+    }
+  }
+
   static String findBesuPid() throws IOException {
     List<String> found = new ArrayList<>();
     String self = String.valueOf(ProcessHandle.current().pid());
@@ -333,7 +432,8 @@ public final class BesuBlockProf {
         try {
           String cmd = new String(Files.readAllBytes(d.resolve("cmdline")), StandardCharsets.UTF_8);
           String pid = d.getFileName().toString();
-          if (cmd.contains("org.hyperledger.besu.Besu") && !pid.equals(self)) found.add(pid);
+          // the main class as an argument of its own, not a shell or grep that mentions it
+          if (List.of(cmd.split("\0")).contains("org.hyperledger.besu.Besu") && !pid.equals(self)) found.add(pid);
         } catch (IOException gone) {
           // the process exited while we looked
         }
