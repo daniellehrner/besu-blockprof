@@ -270,7 +270,20 @@ td.bar { width: 46%; min-width: 260px; }
 .chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hair); font-size: var(--s-xs); color: var(--ink-2); }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: var(--s-sm); color: var(--ink-2); }
 .controls label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
-button.nav { font: inherit; font-size: var(--s-sm); background: var(--surface); color: var(--ink); border: 1px solid var(--axis); border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+.controls .grow { flex: 1; }
+.controls select, .seg button { min-height: 32px; }
+.chip.range { min-height: 32px; padding: 0 10px; font-size: var(--s-sm); color: var(--ink); gap: 2px; }
+.chip.range:has(.x) { padding-right: 3px; }
+.chip .x { width: 24px; height: 24px; border: 0; border-radius: 999px; background: none; color: var(--ink-2); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+.chip .x:hover { background: var(--bg); color: var(--ink); }
+.chip .x:focus-visible { outline: 2px solid var(--ink); outline-offset: 0; }
+.opts { position: relative; }
+.opts summary { list-style: none; display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; font-size: var(--s-sm); color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 4px; cursor: pointer; }
+.opts summary::-webkit-details-marker { display: none; }
+.opts summary:hover { background: var(--bg); }
+.opts summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.opts .pop { width: max-content; max-width: min(420px, calc(100vw - 32px)); gap: 8px; }
+button.nav { font: inherit; font-size: var(--s-sm); background: var(--surface); color: var(--ink); border: 1px solid var(--axis); border-radius: 4px; padding: 3px 10px; min-height: 32px; cursor: pointer; }
 button.nav:hover { background: var(--bg); }
 button.nav:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 button.nav:disabled { color: var(--muted); background: var(--surface); cursor: default; }
@@ -352,11 +365,16 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
             </span>
             <label for="m-scope">Threads</label>
             <select id="m-scope"></select>
-            <span class="chip" id="m-range">Whole window</span>
-            <button class="nav" id="m-clear" type="button" hidden>Clear time range</button>
-            <label><input type="checkbox" id="m-idle"> Include parked and syscall samples inside a phase</label>
-            <label><input type="checkbox" id="m-java"> Count native time on the calling Java method</label>
-            <label><input type="checkbox" id="m-fold"> Fold nested and pass-through calls</label>
+            <span class="chip range" id="m-range"></span>
+            <span class="grow"></span>
+            <details class="opts" id="m-options">
+              <summary>Options ▾</summary>
+              <div class="pop">
+                <label><input type="checkbox" id="m-idle"> Include parked and syscall samples inside a phase</label>
+                <label><input type="checkbox" id="m-java"> Count native time on the calling Java method</label>
+                <label><input type="checkbox" id="m-fold"> Fold nested and pass-through calls</label>
+              </div>
+            </details>
             <span class="help-wrap">
               <button type="button" class="nav icon" id="help-btn" aria-label="Help and hotkeys" aria-expanded="false" aria-controls="help-pop">?</button>
               <div class="pop" id="help-pop" role="dialog" aria-label="Help and hotkeys" hidden>
@@ -1155,7 +1173,7 @@ function fillScopes(b) {
 }
 function setScope(v) { scope = v; fillScopes(D.blocks[selected]); methodsChanged(true); document.getElementById('methods').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 document.getElementById('m-scope').addEventListener('change', e => { scope = e.target.value; methodsChanged(true); });
-document.getElementById('m-clear').addEventListener('click', () => { range = null; drawOverlay(); methodsChanged(true); });
+document.getElementById('m-range').addEventListener('click', e => { if (e.target.id === 'm-clear') { range = null; drawOverlay(); methodsChanged(true); } });
 document.getElementById('m-idle').addEventListener('change', () => methodsChanged(true));
 document.getElementById('m-total').addEventListener('click', e => {
   if (e.target.id === 'm-incl') { document.getElementById('m-idle').checked = true; methodsChanged(true); }
@@ -1490,11 +1508,13 @@ function methodsChanged(rebuild) {
   document.getElementById('req-fcu-ms').textContent = b.fcuMs ? fmt(b.fcuMs) + ' ms' : '–';
   document.getElementById('req-fcu').disabled = !b.fcuMs;
   if (!b.fcuMs && request === 'fcu') setRequest('np');
+  // the options are out of sight in their menu, so its button says how many are on
+  const on = ['m-idle', 'm-java', 'm-fold'].filter(id => document.getElementById(id).checked).length;
+  document.querySelector('#m-options summary').textContent = `Options${on ? ` (${on})` : ''} ▾`;
   const samples = selectedSamples(b);
   if (rebuild || !fstate.root) { fstate.root = buildTree(samples); fstate.zoom = null; fstate.removed = []; fstate.mi = null; }
   const rc = document.getElementById('m-range');
-  rc.textContent = range ? `${fmt(range[0] - b.execStart)} to ${fmt(range[1] - b.execStart)} ms` : 'Whole window';
-  document.getElementById('m-clear').hidden = !range;
+  rc.innerHTML = range ? `${fmt(range[0] - b.execStart)} to ${fmt(range[1] - b.execStart)} ms<button type="button" class="x" id="m-clear" aria-label="Clear time range">×</button>` : 'Whole window · drag the timeline to narrow';
   const threads = new Set(samples.map(x => x[1].name)).size;
   const ms = sum(samples.map(x => x[2]));
   const all = document.getElementById('m-idle').checked ? ms : sum(selectedSamples(b, true).map(x => x[2]));
@@ -1588,21 +1608,29 @@ document.getElementById('next').addEventListener('click', () => step(1));
 const typing = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' ||
   el.tagName === 'INPUT' && !/^(checkbox|radio|button)$/.test(el.type) || el.getAttribute('role') === 'textbox');
 const helpBtn = document.getElementById('help-btn'), helpPop = document.getElementById('help-pop');
+// keep a popover on screen when its button sits near the left edge of a narrow screen
+function onScreen(el) {
+  el.style.right = '0';
+  const r = el.getBoundingClientRect();
+  if (r.left < 8) el.style.right = (r.left - 8) + 'px';
+}
 function help(open) {
   helpPop.hidden = !open;
   helpBtn.setAttribute('aria-expanded', String(open));
-  if (!open) return;
-  // keep the popover on screen when the button sits near the left edge
-  helpPop.style.right = '0';
-  const r = helpPop.getBoundingClientRect();
-  if (r.left < 8) helpPop.style.right = (r.left - 8) + 'px';
+  if (open) onScreen(helpPop);
 }
 helpBtn.addEventListener('click', () => help(helpPop.hidden));
-document.addEventListener('click', e => { if (!helpPop.hidden && !e.target.closest('.help-wrap')) help(false); });
+const opts = document.getElementById('m-options');
+opts.addEventListener('toggle', () => { if (opts.open) onScreen(opts.querySelector('.pop')); });
+document.addEventListener('click', e => {
+  if (!helpPop.hidden && !e.target.closest('.help-wrap')) help(false);
+  if (opts.open && !e.target.closest('#m-options')) opts.open = false;
+});
 function closeAll() {
-  const any = !!searchEl.value || !helpPop.hidden || !!pinned;
+  const any = !!searchEl.value || !helpPop.hidden || !!pinned || opts.open;
   if (searchEl.value) setSearch('');
   if (!helpPop.hidden) help(false);
+  opts.open = false;
   if (pinned) pin(null);
   return any;
 }
