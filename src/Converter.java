@@ -508,7 +508,11 @@ final class Converter {
     if (!procComms.isEmpty()) {
       notes.add(
           "<b>Disk or page cache.</b> While async-profiler ran, besu-blockprof read the kernel's"
-              + " per-thread counters of " + escapeHtml(String.join(", ", new java.util.TreeSet<>(procComms.values())))
+              + " per-thread counters of the threads named "
+              + new java.util.TreeSet<>(procComms.values()).stream()
+                  // Linux cuts thread names to 15 characters
+                  .map(n -> escapeHtml(n) + (n.length() >= 15 ? "…" : ""))
+                  .collect(java.util.stream.Collectors.joining(", "))
               + " about every " + fmtMs(procGapMs) + " ms: <code>read_bytes</code> (bytes the thread"
               + " made the kernel read from the block device, so page-cache misses including"
               + " readahead), read syscalls, time on a CPU and time waiting for one. Wall time minus"
@@ -531,16 +535,19 @@ final class Converter {
     notes.add(
         "<b>Where the time went.</b> The flame graph, the RocksDB split and the method table cover"
             + " one request at a time (newPayload or FCU) for the threads and time range you pick:"
-            + " by default the engine thread, parked samples left out. Threads other than the"
-            + " engine thread are assigned to a request by time, split halfway between the end of"
-            + " newPayload and the start of FCU. The flame graph draws every call level, such as each"
+            + " by default the engine thread, parked samples left out. Samples are assigned to a"
+            + " request by time, split halfway between the end of newPayload and the start of FCU,"
+            + " and parked samples only count inside a phase. With them included, the engine"
+            + " thread adds up to the newPayload and FCU times on the buttons and in the block table."
+            + " The flame graph draws every call level, such as each"
             + " nested <code>UpdateTrackingAccount.getStorageValue</code>, the way async-profiler"
-            + " does. Tick “Fold nested and pass-through calls” for a shallower graph: N nested calls"
-            + " of the same method then show as one frame marked “×N”, and a run of calls that only"
-            + " pass through (one callee holding all the time) shares one bar labelled"
-            + " “first › n frames › last”. Unsymbolised library frames"
+            + " does. Tick “Fold nested and pass-through calls” under Options for a shallower graph:"
+            + " N nested calls of the same method then show as one frame marked “×N”, and a run of"
+            + " calls that only pass through (one callee holding all the time) shares one bar"
+            + " labelled “first › n frames › last”. Unsymbolised library frames"
             + " count on the function that called into them. Tick “Count native time on the"
-            + " calling Java method” to cut every sample back to its deepest Java frame.");
+            + " calling Java method” under Options to cut every sample back to its deepest Java"
+            + " frame. The ? button lists the hotkeys.");
     notes.add(
         "<b>Stack not walkable.</b> AsyncGetCallTrace could not walk these stacks"
             + " (<code>unknown_Java</code>), which happens in stubs and during deoptimisation. The"
