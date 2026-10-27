@@ -154,6 +154,9 @@ p { margin: 0; max-width: 72ch; }
 }
 .sub { color: var(--ink-2); font-size: var(--s-sm); }
 header { display: grid; gap: 10px; }
+.hrow { display: flex; align-items: center; gap: 16px; }
+#theme-btn { margin-left: auto; flex: none; display: inline-grid; place-items: center; }
+#theme-btn svg { width: 16px; height: 16px; }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: var(--s-sm); color: var(--ink-2); }
 .meta b { font-weight: 500; color: var(--ink); font-family: var(--f-mono); font-size: var(--s-xs); }
 
@@ -308,7 +311,10 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
 <div class="wrap">
   <header>
     <div class="label" id="label"></div>
-    <h1>Besu Block Anatomy</h1>
+    <div class="hrow">
+      <h1>Besu Block Anatomy</h1>
+      <button type="button" class="nav icon" id="theme-btn" aria-label="Switch to dark theme" title="Switch to dark theme"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor"/></svg></button>
+    </div>
     <p class="sub" id="intro"></p>
     <div class="meta" id="meta"></div>
   </header>
@@ -392,6 +398,7 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
                   <dt>N / Shift+N</dt><dd>Next / previous match</dd>
                   <dt>Esc</dt><dd>Clear search, close</dd>
                   <dt>← / →</dt><dd>Previous / next block</dd>
+                  <dt>D</dt><dd>Dark or light theme</dd>
                 </dl>
                 <p>Drag across the timeline to pick a time range. Click a thread or pool name on the left of the timeline to look at just that thread or pool.</p>
                 <p>The flame graph draws every call level, like async-profiler does. Tick “Fold nested and pass-through calls” for a shallower graph: a bar labelled “first › n frames › last” is then a run of calls that only pass through, and “×8” marks 8 nested calls of the same method; hover a bar for the full list.</p>
@@ -438,6 +445,9 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
 <script id="data" type="application/json">/*DATA*/</script>
 <script>
 (() => {
+// a theme picked with the button or D wins over the system's; storage can throw on file:// and in private windows
+const THEME_KEY = 'besu-blockprof-theme';
+try { const t = localStorage.getItem(THEME_KEY); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}
 const D = JSON.parse(document.getElementById('data').textContent);
 const IV = D.meta.intervalMs;
 const PAD = D.pad;
@@ -1664,6 +1674,7 @@ document.addEventListener('keydown', e => {
   else if (!e.shiftKey && (k === 'ArrowRight' || k === 'j')) step(1);
   else if (k === 'n' || k === 'N') nextMatch(e.shiftKey ? -1 : 1);
   else if (k === '0' && !e.shiftKey) { fstate.zoom = null; drawFlame(); }
+  else if (k === 'd' || k === 'D') toggleTheme();
   else return;
   e.preventDefault();
 });
@@ -1671,7 +1682,18 @@ document.getElementById('opt-other').addEventListener('change', draw);
 document.getElementById('opt-idle').addEventListener('change', draw);
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { draw(); drawFlame(); }, 80); });
 const mq = window.matchMedia('(prefers-color-scheme: dark)');
-const recolor = () => { readColors(); draw(); drawFlame(); };
+const themeBtn = document.getElementById('theme-btn');
+const shownDark = () => getComputedStyle(document.documentElement).colorScheme === 'dark';
+function themeLabel() { const l = `Switch to ${shownDark() ? 'light' : 'dark'} theme`; themeBtn.setAttribute('aria-label', l); themeBtn.title = l; }
+function toggleTheme() {
+  const next = shownDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(THEME_KEY, next); } catch {}
+  themeLabel();
+}
+themeBtn.addEventListener('click', toggleTheme);
+themeLabel();
+const recolor = () => { readColors(); draw(); drawFlame(); themeLabel(); };
 mq.addEventListener?.('change', recolor);
 new MutationObserver(recolor).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
