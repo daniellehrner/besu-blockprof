@@ -224,6 +224,8 @@ td.bar { width: 46%; min-width: 260px; }
 button.nav { font: inherit; font-size: var(--s-sm); background: var(--surface); color: var(--ink); border: 1px solid var(--axis); border-radius: 4px; padding: 3px 10px; cursor: pointer; }
 button.nav:hover { background: var(--bg); }
 button.nav:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+button.nav:disabled { color: var(--muted); background: var(--surface); cursor: default; }
+.hint { color: var(--muted); font-size: var(--s-xs); }
 .grid2 { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; }
 @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
 .fam-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 6px; vertical-align: 0; }
@@ -262,6 +264,7 @@ code { font-family: var(--f-mono); font-size: 0.92em; }
       <h2 id="d-title"></h2>
       <span class="sub mono" id="d-sub"></span>
       <span style="flex:1"></span>
+      <span class="sub hint">← / → previous and next block</span>
       <button class="nav" id="prev" type="button">← Previous block</button>
       <button class="nav" id="next" type="button">Next block →</button>
     </div>
@@ -607,6 +610,7 @@ function blockTable() {
     }
     return `<tr tabindex="0" data-i="${i}" aria-selected="${i === selected}">${cells.join('')}<td class="bar bar-col"><div class="stack">${bar}</div></td></tr>`;
   }).join('');
+  navState();
 }
 blockTable();
 
@@ -1353,6 +1357,7 @@ function select(i) {
   selected = Math.max(0, Math.min(D.blocks.length - 1, i));
   const b = D.blocks[selected];
   document.querySelectorAll('#blocks tbody tr').forEach(tr => tr.setAttribute('aria-selected', String(+tr.dataset.i === selected)));
+  navState();
   document.getElementById('d-title').textContent = `Block #${fmt(b.num)}`;
   document.getElementById('d-sub').textContent =
     `${b.hash} · ${fmt(b.tx)} tx · ${b.parallelPct >= 0 ? fmt(b.parallelPct, 1) + '% parallel' : ''} · ${fmt(b.gas / 1e6, 1)} Mgas · ${fmt(b.execMs, 1)} ms exec · ${fmt(b.mgas)} MGas/s`;
@@ -1362,8 +1367,29 @@ function select(i) {
   draw(); phaseTable(b); poolTable(b); procLine(b);
   fillScopes(b); methodsChanged(true);
 }
-document.getElementById('prev').addEventListener('click', () => select(selected - 1));
-document.getElementById('next').addEventListener('click', () => select(selected + 1));
+// previous and next follow the table's sort order
+function navState() {
+  const pos = order.indexOf(selected);
+  document.getElementById('prev').disabled = pos === 0;
+  document.getElementById('next').disabled = pos === order.length - 1;
+}
+function step(d) {
+  const i = order[order.indexOf(selected) + d];
+  if (i != null) select(i);
+}
+document.getElementById('prev').addEventListener('click', () => step(-1));
+document.getElementById('next').addEventListener('click', () => step(1));
+// fields that take typed text keep their keys
+const typing = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' ||
+  el.tagName === 'INPUT' && !/^(checkbox|radio|button)$/.test(el.type) || el.getAttribute('role') === 'textbox');
+document.addEventListener('keydown', e => {
+  if (e.altKey || e.ctrlKey || e.metaKey || typing(e.target)) return;
+  const k = e.key;
+  if (!e.shiftKey && (k === 'ArrowLeft' || k === 'k')) step(-1);
+  else if (!e.shiftKey && (k === 'ArrowRight' || k === 'j')) step(1);
+  else return;
+  e.preventDefault();
+});
 document.getElementById('opt-other').addEventListener('change', draw);
 document.getElementById('opt-idle').addEventListener('change', draw);
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { draw(); drawFlame(); }, 80); });
