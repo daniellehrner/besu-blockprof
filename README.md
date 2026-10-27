@@ -8,25 +8,37 @@ Profiles a running Besu with async-profiler and writes a self-contained HTML rep
 
 The block windows come from Besu's own log lines: `Imported #… | … ms exec` and `FCU(VALID) | head: …`.
 
-## Download
+## Quick start
 
-Each [release](https://github.com/daniellehrner/besu-blockprof/releases) has `besu-blockprof`, a single executable: a short shell script with the jar appended. It runs the jar with the Java that runs Besu, else with `java` on `PATH` (21+ with `jdk.jfr`).
+On the machine running Besu:
 
-```
-wget https://github.com/daniellehrner/besu-blockprof/releases/latest/download/besu-blockprof
-chmod +x besu-blockprof
-sudo ./besu-blockprof record
-```
+1. Install [async-profiler](https://github.com/async-profiler/async-profiler/releases) under `/opt`. besu-blockprof looks for it there, and the Besu user can read it, which it must, because the JVM loads its library from there:
+   ```
+   arch=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')
+   wget -qO- https://github.com/async-profiler/async-profiler/releases/download/v4.5/async-profiler-4.5-linux-$arch.tar.gz | sudo tar xz -C /opt
+   ```
+2. Download besu-blockprof:
+   ```
+   wget https://github.com/daniellehrner/besu-blockprof/releases/latest/download/besu-blockprof
+   chmod +x besu-blockprof
+   ```
+3. Profile Besu for five minutes:
+   ```
+   sudo ./besu-blockprof record
+   ```
+   It reads Besu's log from `/var/log/besu`; pass `--log <file or directory>` if Besu writes it elsewhere. At the end it prints the path of the report, `besu-blockprof-<UTC time>.html` in the current directory.
+4. Copy the report to your machine and open it in a browser. It is a single file and works offline:
+   ```
+   scp <node>:besu-blockprof-*.html .
+   ```
 
-`./besu-blockprof --help` lists every option.
+The profiler runs inside the live Besu JVM; read the note on `--cstack` [below](#record) before using it on a node that matters. `./besu-blockprof --help` lists every option.
 
-Recording also needs [async-profiler](https://github.com/async-profiler/async-profiler/releases) on the machine running Besu, in a directory the Besu user can read: the JVM loads its library from there.
+## Download and build
 
-The release also has `besu-blockprof.jar` for `java -jar besu-blockprof.jar`, which takes the same commands and options.
+Each [release](https://github.com/daniellehrner/besu-blockprof/releases) has `besu-blockprof`, a single executable: a short shell script with the jar appended. It runs the jar with the Java that runs Besu, else with `java` on `PATH` (21+ with `jdk.jfr`). The release also has `besu-blockprof.jar` for `java -jar besu-blockprof.jar`, which takes the same commands and options.
 
-## Build
-
-Needs a JDK 21+ for building only:
+Building needs a JDK 21+:
 
 ```
 ./build.sh          # writes besu-blockprof and besu-blockprof.jar
@@ -63,6 +75,7 @@ Options:
 - `--out FILE`: the report. Default `besu-blockprof-<UTC time>.html` in the current directory, or in `FILE` if it is a directory.
 - `--archive`: keep the capture files next to the report, see above.
 - `--log PATH`: the file or directory Besu writes its INFO log to, repeatable. In a directory, the `*.log` and `*.log.N` files written during the capture. Default `/var/log/besu`.
+- `--pid N`: the Besu JVM. Default the one process running `org.hyperledger.besu.Besu`.
 - `--pad MS`: padding around each newPayload and FCU window. Default 50.
 - `--asprof PATH`: default is `asprof` on `PATH`, else the newest `/opt/async-profiler*/bin/asprof` or `~/opt/async-profiler*/bin/asprof`.
 
